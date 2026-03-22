@@ -1,7 +1,110 @@
 # risify-mcp
 
-Pre-built binaries for the Risify MCP server.
+A Model Context Protocol (MCP) server for the Risify GraphQL API. Helps AI assistants search the schema and write correct GraphQL queries and mutations.
 
-## Download
+## Install
 
-See [Releases](https://github.com/analyzify/risify-mcp-public/releases) for the latest binaries.
+```bash
+curl -sL https://raw.githubusercontent.com/analyzify/risify-mcp-public/main/install.sh | sh
+```
+
+This auto-detects your OS and architecture, downloads the latest binary, and installs it to `/usr/local/bin`.
+
+**Supported platforms:** macOS (Intel/Apple Silicon), Linux (amd64/arm64)
+
+### Manual install
+
+Download the binary for your platform from the [Releases](https://github.com/analyzify/risify-mcp-public/releases/latest) page, extract it, and place it somewhere in your `$PATH`.
+
+### Verify
+
+```bash
+risify-mcp version
+```
+
+## Configuration
+
+Add to your MCP client configuration:
+
+**Claude Code** (`.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "risify": {
+      "command": "risify-mcp",
+      "args": ["serve"],
+      "env": {
+        "RISIFY_API_URL": "http://localhost:2136/app/query",
+        "RISIFY_TOKEN": "your-jwt-token"
+      }
+    }
+  }
+}
+```
+
+**Claude Desktop** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "risify": {
+      "command": "risify-mcp",
+      "args": ["serve"],
+      "env": {
+        "RISIFY_API_URL": "http://localhost:2136/app/query",
+        "RISIFY_TOKEN": "your-jwt-token"
+      }
+    }
+  }
+}
+```
+
+**Cursor / VS Code** (MCP settings):
+
+```json
+{
+  "risify": {
+    "command": "risify-mcp",
+    "args": ["serve"],
+    "env": {
+      "RISIFY_API_URL": "http://localhost:2136/app/query",
+      "RISIFY_TOKEN": "your-jwt-token"
+    }
+  }
+}
+```
+
+> Without env vars, the server works in schema-only mode (search + full schema tools).
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `RISIFY_API_URL` | no | Production API | GraphQL endpoint URL |
+| `RISIFY_TOKEN` | no | — | JWT token for `token: <token>` header |
+
+## CLI Commands
+
+```bash
+risify-mcp serve                                    # Start MCP server (stdio)
+risify-mcp serve --transport sse --addr :8080       # Start MCP server (SSE HTTP)
+risify-mcp search audit                             # Search schema for "audit"
+risify-mcp search product --filter queries          # Search queries only
+risify-mcp query '{ ping }'                         # Execute a query
+risify-mcp version                                  # Print version
+```
+
+## MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `introspect_schema` | Search the schema for types, queries, and mutations by name |
+| `graphql_schema_full` | Returns the complete schema in SDL format |
+| `execute_graphql` | Execute a GraphQL query/mutation against the live API |
+
+## Uninstall
+
+```bash
+sudo rm /usr/local/bin/risify-mcp
+```
