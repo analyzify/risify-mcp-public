@@ -85,6 +85,60 @@ Add to your MCP client configuration:
 | `RISIFY_API_KEY` | yes | — | Your Risify API key |
 | `RISIFY_API_URL` | no | Production API | GraphQL endpoint URL (override for custom environments) |
 
+## Testing
+
+After installation, verify everything works:
+
+### 1. Public route (no auth needed)
+
+```bash
+risify-mcp query '{ ping }'
+```
+
+Expected:
+
+```json
+{
+  "data": {
+    "ping": "pong"
+  }
+}
+```
+
+### 2. Authenticated route
+
+Set your credentials and test the `me` query:
+
+```bash
+RISIFY_USER_ID="your-user-id" \
+RISIFY_API_KEY="your-api-key" \
+  risify-mcp query '{ me { id email firstName lastName shopName } }'
+```
+
+Expected (with valid credentials):
+
+```json
+{
+  "data": {
+    "me": {
+      "id": "...",
+      "email": "...",
+      "firstName": "...",
+      "lastName": "...",
+      "shopName": "..."
+    }
+  }
+}
+```
+
+### 3. Schema search (offline)
+
+```bash
+risify-mcp search audit
+risify-mcp search product --filter queries
+risify-mcp search recommendation --filter mutations
+```
+
 ## CLI Commands
 
 ```bash
