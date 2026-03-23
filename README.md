@@ -35,7 +35,6 @@ Add to your MCP client configuration:
       "command": "risify-mcp",
       "args": ["serve"],
       "env": {
-        "RISIFY_API_URL": "http://localhost:2136/app/query",
         "RISIFY_USER_ID": "your-user-id",
         "RISIFY_API_KEY": "your-api-key"
       }
@@ -53,7 +52,6 @@ Add to your MCP client configuration:
       "command": "risify-mcp",
       "args": ["serve"],
       "env": {
-        "RISIFY_API_URL": "http://localhost:2136/app/query",
         "RISIFY_USER_ID": "your-user-id",
         "RISIFY_API_KEY": "your-api-key"
       }
@@ -70,7 +68,6 @@ Add to your MCP client configuration:
     "command": "risify-mcp",
     "args": ["serve"],
     "env": {
-      "RISIFY_API_URL": "http://localhost:2136/app/query",
       "RISIFY_USER_ID": "your-user-id",
       "RISIFY_API_KEY": "your-api-key"
     }
@@ -82,11 +79,10 @@ Add to your MCP client configuration:
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `RISIFY_API_URL` | no | Production API | GraphQL endpoint URL |
-| `RISIFY_USER_ID` | no | — | Value for `x-user-id` header |
-| `RISIFY_API_KEY` | no | — | Value for `x-user-apikey` header |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `RISIFY_USER_ID` | yes | Your Risify user ID |
+| `RISIFY_API_KEY` | yes | Your Risify API key |
 
 ## CLI Commands
 
