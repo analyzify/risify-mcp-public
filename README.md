@@ -79,10 +79,11 @@ Add to your MCP client configuration:
 
 ## Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `RISIFY_USER_ID` | yes | Your Risify user ID |
-| `RISIFY_API_KEY` | yes | Your Risify API key |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `RISIFY_USER_ID` | yes | — | Your Risify user ID |
+| `RISIFY_API_KEY` | yes | — | Your Risify API key |
+| `RISIFY_API_URL` | no | Production API | GraphQL endpoint URL (override for custom environments) |
 
 ## CLI Commands
 
