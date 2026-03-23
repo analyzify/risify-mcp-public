@@ -36,7 +36,8 @@ Add to your MCP client configuration:
       "args": ["serve"],
       "env": {
         "RISIFY_API_URL": "http://localhost:2136/app/query",
-        "RISIFY_TOKEN": "your-jwt-token"
+        "RISIFY_USER_ID": "your-user-id",
+        "RISIFY_API_KEY": "your-api-key"
       }
     }
   }
@@ -53,7 +54,8 @@ Add to your MCP client configuration:
       "args": ["serve"],
       "env": {
         "RISIFY_API_URL": "http://localhost:2136/app/query",
-        "RISIFY_TOKEN": "your-jwt-token"
+        "RISIFY_USER_ID": "your-user-id",
+        "RISIFY_API_KEY": "your-api-key"
       }
     }
   }
@@ -69,7 +71,8 @@ Add to your MCP client configuration:
     "args": ["serve"],
     "env": {
       "RISIFY_API_URL": "http://localhost:2136/app/query",
-      "RISIFY_TOKEN": "your-jwt-token"
+      "RISIFY_USER_ID": "your-user-id",
+      "RISIFY_API_KEY": "your-api-key"
     }
   }
 }
@@ -82,7 +85,8 @@ Add to your MCP client configuration:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `RISIFY_API_URL` | no | Production API | GraphQL endpoint URL |
-| `RISIFY_TOKEN` | no | — | JWT token for `token: <token>` header |
+| `RISIFY_USER_ID` | no | — | Value for `x-user-id` header |
+| `RISIFY_API_KEY` | no | — | Value for `x-user-apikey` header |
 
 ## CLI Commands
 
