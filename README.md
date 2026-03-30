@@ -4,13 +4,23 @@ A Model Context Protocol (MCP) server for the Risify GraphQL API. Helps AI assis
 
 ## Install
 
+### macOS / Linux
+
 ```bash
 curl -sL https://raw.githubusercontent.com/analyzify/risify-mcp-public/main/install.sh | sh
 ```
 
 This auto-detects your OS and architecture, downloads the latest binary, and installs it to `/usr/local/bin`.
 
-**Supported platforms:** macOS (Intel/Apple Silicon), Linux (amd64/arm64)
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/analyzify/risify-mcp-public/main/install.ps1 | iex
+```
+
+This downloads the latest Windows binary and installs it to `%LOCALAPPDATA%\risify-mcp`, automatically adding it to your PATH.
+
+**Supported platforms:** macOS (Intel/Apple Silicon), Linux (amd64/arm64), Windows (amd64/arm64)
 
 ### Manual install
 
@@ -21,6 +31,8 @@ Download the binary for your platform from the [Releases](https://github.com/ana
 ```bash
 risify-mcp version
 ```
+
+On Windows, you can also use: `risify-mcp.exe version`
 
 ## Configuration
 
@@ -160,6 +172,16 @@ risify-mcp version                                  # Print version
 
 ## Uninstall
 
+### macOS / Linux
+
 ```bash
 sudo rm /usr/local/bin/risify-mcp
 ```
+
+### Windows (PowerShell)
+
+```powershell
+Remove-Item "$env:LOCALAPPDATA\risify-mcp" -Recurse -Force
+```
+
+After removal, you may also want to remove `%LOCALAPPDATA%\risify-mcp` from your PATH environment variable via System Settings.
