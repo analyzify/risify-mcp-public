@@ -100,34 +100,105 @@ mutation {
 
 ---
 
-## Shopify Admin API (via shopifyProxy)
+## Bulk FAQ Mutations (Direct Risify API)
 
-All Shopify operations are wrapped in a `shopifyProxy` query. The `query` parameter contains the Shopify Admin GraphQL query/mutation as a string. The `variables` parameter is a JSON object.
+These mutations handle FAQ creation and assignment server-side — no `shopifyProxy` needed.
 
-### Create FAQ Metaobject
+### Create and Assign FAQs (recommended)
+
+Creates FAQ metaobjects AND assigns them to resources in **one call**. The backend handles merging with existing FAQ assignments automatically.
 
 ```graphql
-{
-  shopifyProxy(
-    query: "mutation metaobjectCreate($metaobject: MetaobjectCreateInput!) { metaobjectCreate(metaobject: $metaobject) { metaobject { id handle type displayName updatedAt fields { key value } } userErrors { field message code } } }"
-    variables: {
-      "metaobject": {
-        "type": "$app:risify_faq",
-        "fields": [
-          { "key": "question", "value": "What is your return policy?" },
-          { "key": "answer", "value": "We offer 30-day returns on all products." },
-          { "key": "tags", "value": "[]" }
-        ]
-      }
+mutation($input: BulkCreateAndAssignFaqsInput!) {
+  bulkCreateAndAssignFaqs(input: $input) {
+    created {
+      results { index success metaobjectId handle error }
+      successCount
+      failureCount
     }
-  ) {
-    data
-    errors
+    assigned {
+      results { resourceGID success finalFaqMetaobjectGIDs error }
+      successCount
+      failureCount
+    }
+    assignmentError
+    createdMetaobjectGIDs
   }
 }
 ```
 
-Response path: `data.metaobjectCreate.metaobject.id`
+Variables:
+```json
+{
+  "input": {
+    "items": [
+      { "question": "What is your return policy?", "answer": "We offer 30-day returns on all products." },
+      { "question": "Do you ship internationally?", "answer": "Yes, we ship to 50+ countries." }
+    ],
+    "resourceGIDs": ["gid://shopify/Product/123", "gid://shopify/Collection/456"]
+  }
+}
+```
+
+- Max 250 items per call, max 250 resources per call
+- `created.successCount` / `failureCount` — how many metaobjects were created
+- `assigned.successCount` / `failureCount` — how many resources were updated
+- `createdMetaobjectGIDs` — GIDs of successfully created FAQ metaobjects
+
+### Create FAQs Only (without assigning)
+
+Creates FAQ metaobjects without assigning them to any resource. Useful for imports where assignment is done separately.
+
+```graphql
+mutation($input: BulkCreateFaqMetaobjectsInput!) {
+  bulkCreateFaqMetaobjects(input: $input) {
+    results { index success metaobjectId handle error }
+    successCount
+    failureCount
+  }
+}
+```
+
+Variables:
+```json
+{
+  "input": {
+    "items": [
+      { "question": "What is your return policy?", "answer": "We offer 30-day returns." }
+    ]
+  }
+}
+```
+
+### Assign Existing FAQs to Resources
+
+Assigns already-created FAQ metaobject GIDs to resources. Merges with existing assignments — never overwrites.
+
+```graphql
+mutation($input: BulkAssignFaqsToResourcesInput!) {
+  bulkAssignFaqsToResources(input: $input) {
+    results { resourceGID success finalFaqMetaobjectGIDs error }
+    successCount
+    failureCount
+  }
+}
+```
+
+Variables:
+```json
+{
+  "input": {
+    "resourceGIDs": ["gid://shopify/Product/123"],
+    "faqMetaobjectGIDs": ["gid://shopify/Metaobject/111", "gid://shopify/Metaobject/222"]
+  }
+}
+```
+
+---
+
+## Shopify Admin API (via shopifyProxy)
+
+These operations are wrapped in `shopifyProxy`. Only needed for update, delete, and listing — creation/assignment uses the bulk mutations above.
 
 ### Update FAQ Metaobject
 
@@ -184,79 +255,6 @@ Response path: `data.metaobjectCreate.metaobject.id`
   }
 }
 ```
-
-### Read Existing FAQ Assignments on a Product
-
-```graphql
-{
-  shopifyProxy(
-    query: "query ($id: ID!, $key: String!) { product(id: $id) { id metafield(key: $key) { id value jsonValue } } }"
-    variables: {
-      "id": "gid://shopify/Product/123",
-      "key": "$app:risify.faq"
-    }
-  ) {
-    data
-    errors
-  }
-}
-```
-
-Response path: `data.product.metafield.jsonValue` → array of metaobject GIDs
-
-### Read Existing FAQ Assignments on a Collection
-
-```graphql
-{
-  shopifyProxy(
-    query: "query ($id: ID!, $key: String!) { collection(id: $id) { id metafield(key: $key) { id value jsonValue } } }"
-    variables: {
-      "id": "gid://shopify/Collection/456",
-      "key": "$app:risify.faq"
-    }
-  ) {
-    data
-    errors
-  }
-}
-```
-
-Response path: `data.collection.metafield.jsonValue` → array of metaobject GIDs
-
-### Assign FAQs to Resources (metafieldsSet)
-
-```graphql
-{
-  shopifyProxy(
-    query: "mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { metafields { id value } userErrors { field message } } }"
-    variables: {
-      "metafields": [
-        {
-          "ownerId": "gid://shopify/Product/123",
-          "namespace": "$app:risify",
-          "key": "faq",
-          "value": "[\"gid://shopify/Metaobject/111\",\"gid://shopify/Metaobject/222\"]",
-          "type": "list.metaobject_reference"
-        },
-        {
-          "ownerId": "gid://shopify/Collection/456",
-          "namespace": "$app:risify",
-          "key": "faq",
-          "value": "[\"gid://shopify/Metaobject/111\",\"gid://shopify/Metaobject/222\"]",
-          "type": "list.metaobject_reference"
-        }
-      ]
-    }
-  ) {
-    data
-    errors
-  }
-}
-```
-
-**Important:** The `value` field must be a JSON-encoded string array of metaobject GIDs. Always merge with existing assignments — never overwrite.
-
-**Batch limit:** Max 25 metafields per call. Split into multiple calls if assigning to more than 25 resources.
 
 ### Get FAQ Metrics Count
 

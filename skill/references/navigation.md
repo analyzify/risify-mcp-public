@@ -1,28 +1,49 @@
 # Flow: Navigation Management
 
-Manage Breadcrumbs, Collection Menus, and Related Searches for Shopify products and collections. Includes AI-powered suggestions and bulk generation.
+Manage Breadcrumbs, Similar (collections & products), and Discover suggestions for Shopify products and collections. Includes AI-powered suggestions and bulk generation.
+
+> **UI labels vs metafield keys:** the UI uses "Discover" (formerly "Related Searches") and "Similar" (formerly "Collection Menu"). Metafield keys keep their original names — `related_searches`, `collection_menu`, `related_products`. **Always speak the UI label to the user; use the metafield key only in queries.** Old names ("Related Searches", "Collection Menu") MUST NOT appear in user-facing strings.
 
 ## Architecture
 
 Navigation data is stored as **Shopify metafields** on products and collections:
 
-| Feature | Metafield Key | Type | Applies To |
+| UI label | Metafield Key | Type | Applies To |
 |---------|--------------|------|------------|
 | Breadcrumbs | `$app:risify.breadcrumb` | `list.collection_reference` | Products & Collections |
-| Breadcrumb Custom Title | `$app:risify.breadcrumb_custom_title` | `single_line_text_field` | Products & Collections |
-| Collection Menu | `$app:risify.collection_menu` | `list.collection_reference` | Collections only |
-| Collection Menu Custom Image | `$app:risify.collection_menu_custom_image` | `file_reference` | Collections only |
-| Collection Menu Custom Title | `$app:risify.collection_menu_custom_title` | `single_line_text_field` | Collections only |
-| Collection Menu Description | `$app:risify.collection_menu_description` | `rich_text_field` | Collections only |
-| Related Searches | `$app:risify.related_searches` | `json` | Collections only |
+| Breadcrumbs custom title | `$app:risify.breadcrumb_custom_title` | `single_line_text_field` | Products & Collections |
+| Similar collections | `$app:risify.collection_menu` | `list.collection_reference` | Collections only |
+| Similar collections custom image | `$app:risify.collection_menu_custom_image` | `file_reference` | Collections only |
+| Similar collections custom title | `$app:risify.collection_menu_custom_title` | `single_line_text_field` | Collections only |
+| Similar collections description | `$app:risify.collection_menu_description` | `rich_text_field` | Collections only |
+| Similar products | `$app:risify.related_products` | `list.product_reference` | Products only |
+| Similar products custom image | `$app:risify.related_products_custom_image` | `file_reference` | Products only |
+| Similar products custom title | `$app:risify.related_products_custom_title` | `single_line_text_field` | Products only |
+| Discover suggestions | `$app:risify.related_searches` | `json` | Collections & Products (same key on both owner types) |
+| Discover custom title | `$app:risify.discover_custom_title` | `single_line_text_field` | Collections |
 
 **API patterns:**
 - **Risify API (direct):** AI suggestions (`suggestBreadcrumbPath`, `generateBulkRecommendations`, `similarCollections`), recommendation management, semantic sync
 - **Shopify Admin API (via shopifyProxy):** Reading/writing metafields, listing products/collections, feature activation (metafield definition creation)
 
+## Three navigation features — three different shapes (READ FIRST)
+
+These three features all live under the `$app:risify` namespace and are all written via `metafieldsSet`. They look similar, but the value shape is **completely different** for each. Most malformed-data incidents come from copying the GID-list shape (Breadcrumbs / Similar) onto Discover, where it does not belong.
+
+| Feature | Metafield key | Type | Value shape | Example |
+|---|---|---|---|---|
+| Breadcrumbs | `breadcrumb` | `list.collection_reference` | JSON array of collection GIDs | `["gid://shopify/Collection/1","gid://shopify/Collection/2"]` |
+| Similar collections | `collection_menu` | `list.collection_reference` | JSON array of collection GIDs | `["gid://shopify/Collection/1"]` |
+| Similar products | `related_products` | `list.product_reference` | JSON array of product GIDs | `["gid://shopify/Product/1"]` |
+| **Discover suggestions** | `related_searches` | `json` | JSON array of `{title, url}` objects, where `url` is `/collections/<handle>` or `/products/<handle>` | `[{"title":"Summer Dresses","url":"/collections/summer-dresses"}]` |
+
+> **Discover is the odd one.** Breadcrumbs and both Similar variants take Shopify GIDs. Discover does **NOT** — it takes handle-based URLs. If you only have a GID for a collection or product, you must resolve its `handle` (via `collectionByHandle` / `productByHandle`, or by fetching `handle` alongside `id` in your initial `collections`/`products` query) before constructing the Discover URL. Writing `"url": "gid://shopify/..."` into a Discover entry corrupts the metafield — the storefront block reads `search.url` directly into an `<a href>`, and a GID there breaks every link.
+
+When you are doing a bulk job that touches more than one of these three features in the same conversation (e.g. a spreadsheet import), keep this table in front of you as you build each `metafields[]` entry. The Discover entries are not interchangeable with the other two.
+
 ## Prerequisites: Feature Activation
 
-Navigation features must be activated before use. Each feature (Breadcrumb, Collection Menu, Related Searches) is activated independently by creating its metafield definitions in Shopify.
+Navigation features must be activated before use. Each feature (Breadcrumbs, Similar collections, Similar products, Discover) is activated independently by creating its metafield definitions in Shopify.
 
 ### Check if features are activated
 
@@ -143,18 +164,22 @@ Set the metafield value to an empty array:
 
 ---
 
-## Flow: Collection Menu
+## Flow: Similar (collections + products)
 
-Collection Menus show related/sub-collections within a collection page.
+"Similar" is the user-facing label. The metafield key depends on owner type:
+- **Similar collections** → metafield key `collection_menu` (legacy name; UI label is "Similar")
+- **Similar products** → metafield key `related_products`
 
-### View current collection menus
+When the user says "similar" without specifying, ask: "On your products or collections?" — these are different metafields with different recommendation types.
+
+### View current Similar collections
 
 ```graphql
 # Via shopifyProxy
 query { collections(first: 20) { nodes { id title handle collectionMenus: metafield(key: "$app:risify.collection_menu") { jsonValue } } pageInfo { hasNextPage endCursor } } }
 ```
 
-### Set collection menu manually
+### Set Similar collections manually
 
 ```graphql
 # Via shopifyProxy
@@ -176,9 +201,7 @@ Optional custom fields (add to same metafieldsSet call):
 ]
 ```
 
-### AI collection menu suggestions
-
-Use similar collections to suggest menu items:
+### AI Similar collections suggestions
 
 ```graphql
 # Direct Risify query
@@ -201,22 +224,128 @@ mutation {
 }
 ```
 
----
+> Note on the enum name: `COLLECTION_MENU` is the GraphQL enum value (legacy). The user-facing label is "Similar collections". Never expose the enum name to the user.
 
-## Flow: Related Searches
+### Similar products
 
-Related Searches show relevant search terms on collection pages (e.g., "You might also like: summer dresses, floral prints").
+Product-side "Similar" feature. Different metafield key — `related_products`, type `list.product_reference`.
 
-### View current related searches
+**View current Similar products:**
 
 ```graphql
 # Via shopifyProxy
-query { collections(first: 20) { nodes { id title handle relatedSearches: metafield(key: "$app:risify.related_searches") { jsonValue } } pageInfo { hasNextPage endCursor } } }
+query {
+  product(id: "gid://shopify/Product/123") {
+    id title handle
+    relatedProducts: metafield(key: "$app:risify.related_products") { jsonValue }
+    relatedProductsCustomTitle: metafield(key: "$app:risify.related_products_custom_title") { value }
+  }
+}
 ```
 
-`jsonValue` returns a JSON array of `[{ "title": "Search Term", "url": "/collections/handle" }, ...]`
+`jsonValue` is a JSON array of product GIDs: `["gid://shopify/Product/123", "gid://shopify/Product/456"]`.
 
-### Set related searches manually
+**Set Similar products manually:**
+
+```graphql
+# Via shopifyProxy
+mutation { metafieldsSet(metafields: [{
+  ownerId: "gid://shopify/Product/123"
+  namespace: "$app:risify"
+  key: "related_products"
+  value: "[\"gid://shopify/Product/abc\", \"gid://shopify/Product/def\"]"
+  type: "list.product_reference"
+}]) { metafields { id value } userErrors { field message } } }
+```
+
+Optional custom title (`related_products_custom_title`, `single_line_text_field`) — add to same `metafieldsSet` call.
+
+**AI suggestions for Similar products:** None available. The schema has no `similarProducts` query (only `similarCollections` exists at present), and `generateBulkRecommendations` is hard-coded to `collectionIds: [ID!]!` with enum values `BREADCRUMBS`, `COLLECTION_MENU`, `RELATED_SEARCH` — all collection-side. Selection MUST be manual: `metafieldsSet` with hand-picked product GIDs. Do not promise the user AI bulk-generation for Similar products. If/when a product-side equivalent ships, document it here.
+
+---
+
+## Flow: Discover
+
+Discover suggestions (legacy name "Related Searches") show relevant search terms on collection and product pages — e.g. "You might also like: summer dresses, floral prints". Stored in the `$app:risify.related_searches` metafield (`type: json`) — **same key on both Collection and Product owner types** (confirmed by `featureActivationConfig.ts`). Old name "Related Searches" — never use it with the user.
+
+### Canonical entry shape
+
+A valid related-search entry MUST have exactly these two fields:
+
+```ts
+{
+  title: string,   // 1-80 chars, the visible label
+  url: string      // matches ^/(collections|products)/[a-z0-9-]+$
+}
+```
+
+The metafield value is a JSON array of these objects. Anything else is legacy or corrupt — never trust `jsonValue` blindly. Always run the audit flow below before writing.
+
+> _**Last verified:** 2026-05-06 against `risifyv2_remix@ad330c8` (`app/features/risify/constants/featureActivationConfig.ts:222-263`, `pages/navigation/components/modals/BulkRelatedSearchEditModal.tsx`) and `risify-mcp-main@75876e9` (`schema.graphql` `RecommendationType:944-947`). Re-check this section when the in-app "Recover" flow ships, when the metafield definition changes, or when `featureActivationConfig.ts` is updated — the canonical shape and legacy-shape table here are derived from those sources._
+
+### Recognized legacy / invalid shapes
+
+Older stores may have any of these in `$app:risify.related_searches`:
+
+| Symptom | Likely source | Action |
+|---|---|---|
+| Keys are `{name, link}`, `{label, slug}`, `{q, href}` | Pre-rename schema | FIXABLE — remap to `{title, url}` |
+| Plain string entries (`["bestsellers", ...]`) | Earliest format | FIXABLE — wrap as `{title: humanize(handle), url: "/collections/<handle>"}`, confirm titles with user |
+| Locale-prefixed url (`/en/collections/foo`, `/fr/...`) | Multi-language migration | FIXABLE — strip leading `/<lang>/` |
+| Absolute url (`https://shop.com/collections/foo`) | Pasted by user or old AI flow | FIXABLE — strip origin |
+| Missing `url` or `title`, empty handle after parse | Corruption | DROP — report to user |
+| `jsonValue` is null but `value` is non-empty | Metafield definition `type` drift (e.g. `single_line_text_field`) | STOP — do NOT write; report definition mismatch |
+| Non-array `jsonValue` (single object instead of array) | Buggy old write | FIXABLE — wrap in array |
+| Entry handle resolves to neither a collection nor a product | Item deleted / renamed in Shopify | DROP — report broken link to user |
+
+### View current Discover suggestions (always read `type`, `value`, AND `jsonValue`)
+
+```graphql
+# Via shopifyProxy
+query {
+  collection(id: "gid://shopify/Collection/123") {
+    id title handle
+    relatedSearches: metafield(key: "$app:risify.related_searches") {
+      type value jsonValue
+    }
+  }
+}
+```
+
+- If `type` is not `"json"` → metafield definition mismatch. Report to user, do not write.
+- If `jsonValue` is null but `value` is non-empty → same issue. Report; do not write.
+- If `jsonValue` is a single object → wrap in an array before classifying.
+
+### Audit & repair existing entries (run before any write)
+
+When the user asks to view, edit, or regenerate Discover suggestions, ALWAYS run this flow:
+
+1. **Read** `type`, `value`, `jsonValue` (query above).
+2. **Classify** each entry as VALID / FIXABLE / DROP / STOP using the table above.
+3. **Normalize** FIXABLE entries:
+   - Strip leading `/<lang>/` from url (regex: `^/[a-z]{2}/` → `/`)
+   - Strip absolute origin from url (regex: `^https?://[^/]+` → ``)
+   - Lowercase the handle segment
+   - Map alternate key names to `{title, url}`
+4. **Resolve** every handle to a real Shopify GID:
+
+```graphql
+# Via shopifyProxy
+query ($h: String!) {
+  collectionByHandle(handle: $h) { id title }
+  productByHandle(handle: $h)    { id title }
+}
+```
+   Drop entries where neither resolves.
+5. **Report** counts to the user before writing:
+   > "This collection has {N} discover suggestions. {V} are valid, {F} need repair, {D} will be dropped ({reasons}). Apply repairs?"
+6. **Write** only on confirmation, using the canonical `{title, url}` shape.
+
+See `references/navigation-operations.md` → "Audit Discover suggestions" and "Repair Discover suggestions" for full GraphQL.
+
+### Set Discover suggestions manually
+
+After audit + user confirmation:
 
 ```graphql
 # Via shopifyProxy
@@ -229,14 +358,16 @@ mutation { metafieldsSet(metafields: [{
 }]) { metafields { id value } userErrors { field message } } }
 ```
 
-### AI related search suggestions
+**Always** write the canonical `{title, url}` shape. If the existing payload had extra keys (description, image, custom title, etc.), drop them — the storefront and Risify dashboard only consume `title` and `url`. Future shape upgrades happen through the in-app Recover flow, not the AI.
+
+### AI Discover suggestions
 
 ```graphql
 # Direct Risify query
 query { similarCollections(collectionId: "gid://shopify/Collection/123", limit: 10, threshold: 0.75) { id title handle score } }
 ```
 
-Convert results to related search format: `{ title: collection.title, url: "/collections/" + collection.handle }`
+Convert results to canonical Discover entry shape: `{ title: collection.title, url: "/collections/" + collection.handle }`
 
 Or bulk generate:
 ```graphql
@@ -254,11 +385,13 @@ mutation {
 }
 ```
 
+> AI-generated suggestions are already in canonical shape (`{title: collection.title, url: "/collections/" + collection.handle}`). No audit step needed for fresh writes — only when modifying an existing metafield that may have legacy data.
+
 ---
 
-## Recommendation Management
+## Recommendation Management (UI: "AI Recommendations" tab; review modal: "Review & Save Recommendations")
 
-After generating recommendations via `generateBulkRecommendations`, they are saved as `SavedRecommendation` objects that can be reviewed.
+After generating recommendations via `generateBulkRecommendations`, they are saved as `SavedRecommendation` objects that can be reviewed in the "AI Recommendations" tab.
 
 ### View recommendations for a collection
 
@@ -339,19 +472,28 @@ This uses AI credits. Check `semanticSyncPreview` first to show the user the cos
 | Insufficient credits for sync | Tell user. Direct to plan upgrade or credit management |
 | generateBulkRecommendations errors | Check individual `errors` array — some collections may fail while others succeed |
 | metafieldsSet fails | Check ownerId is valid, metafield definition exists |
+| Legacy / unrecognized entry shape in related_searches | Run the Audit & repair flow in "Flow: Discover" — never overwrite blindly. Confirm dropped entries with the user first |
+| Metafield definition `type` drift (jsonValue null while value non-empty) | Report the mismatch to the user. Do not write. They need to fix the metafield definition first |
 
 ## Constants
 
-| Key | Value |
-|-----|-------|
-| Breadcrumb metafield key | `breadcrumb` |
-| Breadcrumb custom title key | `breadcrumb_custom_title` |
-| Collection menu key | `collection_menu` |
-| Collection menu custom image key | `collection_menu_custom_image` |
-| Collection menu custom title key | `collection_menu_custom_title` |
-| Collection menu description key | `collection_menu_description` |
-| Related searches key | `related_searches` |
+| UI label | Metafield key |
+|---|---|
+| Breadcrumbs | `breadcrumb` |
+| Breadcrumbs custom title | `breadcrumb_custom_title` |
+| Similar collections | `collection_menu` |
+| Similar collections custom image | `collection_menu_custom_image` |
+| Similar collections custom title | `collection_menu_custom_title` |
+| Similar collections description | `collection_menu_description` |
+| Similar products | `related_products` |
+| Similar products custom image | `related_products_custom_image` |
+| Similar products custom title | `related_products_custom_title` |
+| Discover suggestions | `related_searches` |
+| Discover custom title | `discover_custom_title` |
+
+| Other | Value |
+|---|---|
 | Metafield namespace | `$app:risify` |
-| Recommendation types | `BREADCRUMBS`, `COLLECTION_MENU`, `RELATED_SEARCH` |
+| Recommendation types (GraphQL enum, never user-facing) | `BREADCRUMBS`, `COLLECTION_MENU`, `RELATED_SEARCH` |
 | Recommendation statuses | `PENDING`, `ACCEPTED`, `DISMISSED` |
 | Max metafields per batch | 25 |

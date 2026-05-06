@@ -7,7 +7,7 @@ Generate AI-powered FAQs and save them to Shopify as metaobjects linked to produ
 FAQs are **Shopify Metaobjects** (type `$app:risify_faq`) with fields `question`, `answer`, `tags`. They are linked to resources via **metafields** (namespace `$app:risify`, key `faq`, type `list.metaobject_reference`).
 
 - Generation uses the **Risify API** directly (`generateAIFAQ`)
-- Saving/assigning uses the **Shopify Admin API** via `shopifyProxy`
+- Saving/assigning uses the **Risify API** directly (`bulkCreateAndAssignFaqs`) — one call creates metaobjects AND assigns them to resources
 
 ## Step-by-Step Flow
 
@@ -57,9 +57,7 @@ mutation { generateAIFAQ(input: { resourceGIDs: ["gid://shopify/Product/123"] co
 
 ### Step 4: Review with User
 
-Present each generated FAQ. The user may accept, edit, or discard.
-
-ALWAYS use this exact template:
+Present each generated FAQ for approval. ALWAYS use this exact template:
 
 ```
 **FAQ #N**
@@ -68,39 +66,93 @@ A: {answer}
 → Accept / Edit / Discard?
 ```
 
-### Step 5: Save as Shopify Metaobjects
+**Handling responses:**
+- **Accept** → Add to the approved list for Step 5
+- **Edit** → Ask user for revised Q&A, update the item, re-confirm, then add to approved list
+- **Discard** → Skip this FAQ entirely
 
-For each accepted FAQ, create a metaobject via shopifyProxy. See `faq-operations.md` for the exact query.
+After all FAQs are reviewed, confirm the final list: "Saving {N} FAQs to {M} resources. Proceed?"
+If no FAQs were accepted, stop and inform user.
 
-Create one metaobject per FAQ with:
-- type: `$app:risify_faq`
-- fields: `question`, `answer`, `tags` (tags defaults to `"[]"`)
+### Step 5: Save and Assign FAQs
 
-Collect all created metaobject IDs from the response.
+Use `bulkCreateAndAssignFaqs` to create all accepted FAQs and assign them to the selected resources in **one call**:
 
-### Step 6: Assign to Resources
+```graphql
+mutation($input: BulkCreateAndAssignFaqsInput!) {
+  bulkCreateAndAssignFaqs(input: $input) {
+    created {
+      results { index success metaobjectId error }
+      successCount
+      failureCount
+    }
+    assigned {
+      results { resourceGID success finalFaqMetaobjectGIDs error }
+      successCount
+      failureCount
+    }
+    createdMetaobjectGIDs
+    assignmentError
+  }
+}
+```
 
-Link the new FAQ metaobjects to the selected products/collections by setting metafields.
+Variables — put the accepted questions/answers in `items` and the resource GIDs from Step 2 in `resourceGIDs`:
+```json
+{
+  "input": {
+    "items": [
+      { "question": "What is your return policy?", "answer": "We offer 30-day returns on all products." },
+      { "question": "Do you ship internationally?", "answer": "Yes, we ship to 50+ countries." }
+    ],
+    "resourceGIDs": ["gid://shopify/Product/123", "gid://shopify/Collection/456"]
+  }
+}
+```
 
-For each resource:
-1. Read its existing FAQ metafield to get current FAQ IDs
-2. Merge new FAQ IDs with existing ones (deduplicate)
-3. Write the updated list back via `metafieldsSet`
+This single call creates FAQ metaobjects, assigns them to all specified resources, and merges with any existing FAQ assignments. Max 250 items per call.
 
-See `faq-operations.md` for exact queries. Batch limit: max 25 metafields per `metafieldsSet` call.
+Check `created.successCount` and `assigned.successCount` in the response to confirm results.
 
-### Step 7: Confirm
+**Note:** `assigned` may be null if all FAQ creations failed. Always check `created.failureCount` first — if all items failed, skip assignment reporting.
+
+### Step 6: Confirm
 
 Tell the user how many FAQs were created and which resources they were assigned to.
 
-## Additional Operations
+## Additional Workflows
 
-| Task | Method |
-|------|--------|
-| List existing FAQs | shopifyProxy → `metaobjects(type: "$app:risify_faq")` |
-| Update a FAQ | shopifyProxy → `metaobjectUpdate` |
-| Delete a FAQ | shopifyProxy → `metaobjectDelete` |
-| View FAQ count | `shopifyProductsConnection` / `shopifyCollectionsConnection` with `pageInfo.totalCount` |
+### List Existing FAQs
+
+Use the List Existing FAQs query from `faq-operations.md`. Present results as:
+
+```text
+Your FAQs ({count} total):
+
+1. Q: {question}
+   A: {answer}
+   ID: {metaobject GID}
+
+2. Q: {question}
+   A: {answer}
+   ID: {metaobject GID}
+
+{pagination info if more pages}
+```
+
+### Update a FAQ
+
+1. Find the FAQ — list FAQs and let user identify which one (by number or question text)
+2. Ask what to change (question, answer, or both)
+3. Use the Update FAQ Metaobject mutation from `faq-operations.md`
+4. Confirm: "FAQ updated successfully."
+
+### Delete a FAQ
+
+1. Find the FAQ — list FAQs and let user identify which one
+2. **Confirm before deleting:** "Delete FAQ: '{question}'? This cannot be undone."
+3. Use the Delete FAQ Metaobject mutation from `faq-operations.md`
+4. Confirm: "FAQ deleted."
 
 ## Constants
 
@@ -120,6 +172,6 @@ Tell the user how many FAQs were created and which resources they were assigned 
 |-----------|----------|
 | No AI credits | Tell user. Direct to Risify > Support > AI Credits |
 | Invalid resource GIDs | Verify selections exist. Re-fetch if needed |
-| metaobjectCreate fails | FAQ feature may not be activated. User must enable it in Risify first |
-| metafieldsSet fails | Check ownerId validity and that metafield definition exists |
-| shopifyProxy errors | Check `errors` field. Common: access denied, rate limited |
+| bulkCreateAndAssignFaqs fails | FAQ feature may not be activated. User must enable it in Risify first |
+| Partial failures | Check `created.failureCount` and `assigned.failureCount` — some items may succeed while others fail |
+| shopifyProxy errors (update/delete) | Check `errors` field. Common: access denied, rate limited |
