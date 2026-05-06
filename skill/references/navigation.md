@@ -26,20 +26,13 @@ Navigation data is stored as **Shopify metafields** on products and collections:
 - **Risify API (direct):** AI suggestions (`suggestBreadcrumbPath`, `generateBulkRecommendations`, `similarCollections`), recommendation management, semantic sync
 - **Shopify Admin API (via shopifyProxy):** Reading/writing metafields, listing products/collections, feature activation (metafield definition creation)
 
-## Three navigation features — three different shapes (READ FIRST)
+## Discover is the odd one (READ FIRST)
 
-These three features all live under the `$app:risify` namespace and are all written via `metafieldsSet`. They look similar, but the value shape is **completely different** for each. Most malformed-data incidents come from copying the GID-list shape (Breadcrumbs / Similar) onto Discover, where it does not belong.
+Breadcrumbs and both Similar variants take Shopify GIDs (see the Architecture table above for exact `type` values). Discover does **NOT** — it takes handle-based URLs (`/collections/<handle>` or `/products/<handle>`).
 
-| Feature | Metafield key | Type | Value shape | Example |
-|---|---|---|---|---|
-| Breadcrumbs | `breadcrumb` | `list.collection_reference` | JSON array of collection GIDs | `["gid://shopify/Collection/1","gid://shopify/Collection/2"]` |
-| Similar collections | `collection_menu` | `list.collection_reference` | JSON array of collection GIDs | `["gid://shopify/Collection/1"]` |
-| Similar products | `related_products` | `list.product_reference` | JSON array of product GIDs | `["gid://shopify/Product/1"]` |
-| **Discover suggestions** | `related_searches` | `json` | JSON array of `{title, url}` objects, where `url` is `/collections/<handle>` or `/products/<handle>` | `[{"title":"Summer Dresses","url":"/collections/summer-dresses"}]` |
+If you only have a GID for a collection or product, resolve its `handle` first — via `collectionByHandle` / `productByHandle`, or by fetching `handle` alongside `id` in your initial `collections`/`products` query — before constructing the Discover URL. Writing `"url": "gid://shopify/..."` into a Discover entry corrupts the metafield: the storefront block reads `search.url` directly into an `<a href>`, so a GID there breaks every link.
 
-> **Discover is the odd one.** Breadcrumbs and both Similar variants take Shopify GIDs. Discover does **NOT** — it takes handle-based URLs. If you only have a GID for a collection or product, you must resolve its `handle` (via `collectionByHandle` / `productByHandle`, or by fetching `handle` alongside `id` in your initial `collections`/`products` query) before constructing the Discover URL. Writing `"url": "gid://shopify/..."` into a Discover entry corrupts the metafield — the storefront block reads `search.url` directly into an `<a href>`, and a GID there breaks every link.
-
-When you are doing a bulk job that touches more than one of these three features in the same conversation (e.g. a spreadsheet import), keep this table in front of you as you build each `metafields[]` entry. The Discover entries are not interchangeable with the other two.
+When a bulk job touches more than one of these features in the same conversation (e.g. a spreadsheet import), treat Discover as the non-conformer.
 
 ## Prerequisites: Feature Activation
 

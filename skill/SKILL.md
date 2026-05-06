@@ -19,8 +19,10 @@ description: >
   "import questions and answers", "add these FAQs to my collections",
   "what plan am I on", "how many credits do I have", "add a team member",
   "show my billing history", "cancel my subscription", "list my FAQs",
-  "set up breadcrumbs", "suggest breadcrumbs with AI", "add collection menu",
-  "configure related searches", "generate navigation recommendations".
+  "set up breadcrumbs", "suggest breadcrumbs with AI",
+  "set up similar collections" (legacy alias: "add collection menu"),
+  "configure discover suggestions" (legacy alias: "configure related searches"),
+  "generate navigation recommendations".
   All operations use the execute_graphql MCP tool.
 ---
 
@@ -62,7 +64,7 @@ Match the user's request to the right flow:
 | "Add similar collections" / "Set up similar" (on a collection) | Navigation → Similar collections |
 | "Show related products" / "Set up similar products" (on a product) | Navigation → Similar products |
 | "Open a support ticket" | Support → Create Ticket |
-| "List all collections with products" / "Export collections" | → Collection Products Export flow |
+| "List all collections with products" / "Export collections" | Recipe 18: Collection Products Export |
 | **Multi-step workflows** | **→ See `references/recipes.md`** |
 | "Fix my SEO issues" / "Fix meta issues from audit" | Recipe 1: Audit → Fix Meta Issues |
 | "Set up all navigation from scratch" | Recipe 11: Full Navigation Setup |

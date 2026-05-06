@@ -2,6 +2,8 @@
 
 Multi-step workflows that chain features together. When a user's request spans multiple features, follow the matching recipe instead of improvising.
 
+> **Recipe numbering:** the gaps in the sequence (1, 11, 11b, 13–18) are intentional. Omitted numbers correspond to multi-step flows that depend on features not yet shipped in the backend; they are deliberately not surfaced to avoid routing users to operations that don't work.
+
 ---
 
 ## Category 1: Audit-Driven Fixes
@@ -46,12 +48,13 @@ Multi-step workflows that chain features together. When a user's request spans m
    ```graphql
    mutation { generateBulkRecommendations(collectionIds: [...], types: [BREADCRUMBS, COLLECTION_MENU, RELATED_SEARCH]) { results { collectionId breadcrumbs { id title handle score } collectionMenu { id title handle score } relatedSearch { id title handle score } } errors { collectionId message } totalProcessed totalCreditsUsed } }
    ```
-   > Enum→UI mapping (never expose enum names to user): `BREADCRUMBS`→Breadcrumbs, `COLLECTION_MENU`→Similar collections, `RELATED_SEARCH`→Discover.
+   > Use these enum names (`BREADCRUMBS`, `COLLECTION_MENU`, `RELATED_SEARCH`) only inside the mutation. When speaking to the user, render them as **Breadcrumbs**, **Similar collections**, and **Discover** respectively.
 6. Present recommendations grouped by collection → user accepts/dismisses
 7. Apply accepted recommendations via shopifyProxy metafieldsSet (see `navigation-operations.md`)
-8. **Note:** This recipe doesn't cover **Similar products** — that's a product-side feature with metafield key `related_products` and no `generateBulkRecommendations` enum. If the user wants product-side coverage, handle products separately via `BulkRelatedProductsEditModal` flow (manual selection or product-side AI suggestion if available).
 
 **Flows involved:** Navigation (sync → generate → apply)
+
+> **Caveat:** This recipe doesn't cover **Similar products** — that's a product-side feature with metafield key `related_products` and no `generateBulkRecommendations` enum. If the user wants product-side coverage, handle products separately via the manual Similar-products write path (see `navigation.md` → Similar products).
 
 ---
 
