@@ -350,10 +350,11 @@ See `gsc.md` and `keywords.md` for the full vocabulary.
 
 1. Pull top GSC pages by impressions for the last 28 days (`service: "gsc"`):
    ```graphql
-   query($input: ScTrafficInput!) {
-     scTrafficsPaginated(input: $input) {
-       totalCount
-       nodes { urlId clicks impressions ctr position }
+   query($input: V2ScPagesInput!) {
+     v2ScPages(input: $input) {
+       summary { clicks impressions ctr position }
+       rows { pageUrl clicks impressions ctr position }
+       pageInfo { totalCount totalPages hasNextPage }
      }
    }
    ```
@@ -365,16 +366,15 @@ See `gsc.md` and `keywords.md` for the full vocabulary.
          "taskId": "<from-step-1-of-prereq>",
          "startDate": "<28 days ago>",
          "endDate": "<2 days ago>",
-         "groupByFields": ["url_id"],
-         "orderByFields": ["impressions DESC"]
-       },
-       "limit": 100, "page": 1
+         "orderByFields": ["-impressions"],
+         "limit": 100, "page": 1
+       }
    }}
    ```
 
 2. **In the response, filter to opportunity rows:** `impressions >= 500` AND `ctr < 0.5` (i.e. under 0.5%) AND `position <= 20`. These are the pages where Google is willing to show you but users aren't clicking.
 
-3. For each candidate URL, extract the handle and resolve to a Shopify GID (same approach as Recipe 1, step 4):
+3. For each candidate `pageUrl`, extract the handle and resolve to a Shopify GID (same approach as Recipe 1, step 4):
    ```graphql
    { shopifyProductsConnection(args: { first: 5, query: "handle:<handle>" }) { nodes { id title } } }
    ```
@@ -409,15 +409,15 @@ See `gsc.md` and `keywords.md` for the full vocabulary.
 
 1. Pull top GSC queries by impressions for the last 28 days (`service: "gsc"`):
    ```graphql
-   query($input: ScTrafficInput!) {
-     scTrafficsPaginated(input: $input) {
-       nodes { queried clicks impressions ctr position }
+   query($input: V2ScQueriesInput!) {
+     v2ScQueries(input: $input) {
+       rows { query clicks impressions ctr position }
      }
    }
    ```
-   Variables: `groupByFields: ["queried"]`, `orderByFields: ["impressions DESC"]`, `limit: 200`.
+   Variables: `default: { spaceId, taskId, startDate, endDate, orderByFields: ["-impressions"], limit: 200, page: 1 }`.
 
-2. Filter for question shapes in `queried`. Match queries that:
+2. Filter for question shapes in `query`. Match queries that:
    - Start with `how`, `what`, `why`, `when`, `where`, `which`, `who`, `does`, `do`, `can`, `is`, `are`, `should`, OR
    - End with `?`, OR
    - Contain a "how to" / "vs" / "difference between" / "size guide" / "fit" phrase.
@@ -466,13 +466,13 @@ See `gsc.md` and `keywords.md` for the full vocabulary.
 
 3. Pull GSC traffic per URL for the same set (`service: "gsc"`):
    ```graphql
-   query($input: ScTrafficInput!) {
-     scTrafficsPaginated(input: $input) {
-       nodes { urlId impressions clicks ctr position }
+   query($input: V2ScPagesInput!) {
+     v2ScPages(input: $input) {
+       rows { pageUrl impressions clicks ctr position }
      }
    }
    ```
-   Variables: `groupByFields: ["url_id"]`, last 28 days, `limit: 500`. Build a `url → { impressions, clicks }` map from the response. Pages with no entry have 0 search traffic.
+   Variables: `default: { spaceId, taskId, startDate, endDate, orderByFields: ["-impressions"], limit: 500, page: 1 }`. Build a `pageUrl → { impressions, clicks }` map from the response. Pages with no entry have 0 search traffic.
 
 4. **Score each issue** as `traffic_score = impressions + 10 * clicks` (clicks weighted higher since they're committed users). Multiply by `impact_weight` from the audit (`HIGH: 3, MEDIUM: 2, LOW: 1`) → final priority score.
 
@@ -521,7 +521,7 @@ See `gsc.md` and `keywords.md` for the full vocabulary.
 
 3. **Find drops:** filter rows where `day7 - position >= 3` AND `position <= 50` (was tracking, now significantly worse, still on the radar). Sort by drop size desc, keep top 10.
 
-4. For each drop, pull the ranking URL from `keyword.url`. If empty (no current ranking page), fall back to GSC: query `scTrafficsPaginated` filtered by `queryExact: "<keyword>"`, take the top-clicks page from the response.
+4. For each drop, pull the ranking URL from `keyword.url`. If empty (no current ranking page), fall back to GSC v1 `scTrafficsPaginated` with `groupByFields: ["url_id"]` + `queryExact: "<keyword>"` (v1 is required here because v2's `V2ScPagesInput` doesn't expose per-query filtering); take the top-clicks page from the response.
 
 5. For each (keyword, URL) pair:
    - Resolve URL → Shopify GID (Recipe 1, step 4 pattern).
