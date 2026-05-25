@@ -95,7 +95,9 @@ Add to your MCP client configuration:
 |----------|----------|---------|-------------|
 | `RISIFY_USER_ID` | yes | — | Your Risify user ID |
 | `RISIFY_API_KEY` | yes | — | Your Risify API key |
-| `RISIFY_API_URL` | no | Production API | GraphQL endpoint URL (override for custom environments) |
+| `RISIFY_API_URL` | no | Production API | Main Risify GraphQL endpoint (override for custom environments) |
+| `RISIFY_REPORT_API_URL` | no | Production GSC analytics endpoint | GraphQL endpoint for Search Console analytics. Used when `service: "gsc"` is requested. |
+| `RISIFY_KEYWORD_API_URL` | no | Production keyword tracking endpoint | GraphQL endpoint for keyword tracking. Used when `service: "keyword"` is requested. |
 
 ## Testing
 
