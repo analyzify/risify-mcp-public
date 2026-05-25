@@ -1,12 +1,12 @@
 # GSC GraphQL Operations Reference
 
-Read-only analytics from Google Search Console. Pass `service: "gsc"` to `execute_graphql` and `introspect_schema` for every operation in this file **except** the connection-status checks at the top, which use the default `service: "risify"`.
+Read-only analytics from Google Search Console via the reportgo service. Pass `service: "gsc"` to `execute_graphql` and `introspect_schema` for every analytics operation in this file. Connection-status and token-mint operations use the default `service: "risify"`.
 
 ---
 
 ## Connection status (service: "risify")
 
-### Get connection info
+### Get connection info + reTaskId
 ```graphql
 query {
   gscConnection {
@@ -14,168 +14,288 @@ query {
     status
     email
     siteUrl
+    reTaskId
     connectedAt
   }
 }
 ```
 
+`reTaskId` is the GSC sync task identifier on reportgo. Save it; every analytics call needs it as `default.taskId`.
+
 ### List connected sites
 ```graphql
 query {
-  gscSites {
-    url
-  }
+  gscSites { url }
 }
 ```
+
+### Mint a space token (to derive spaceId)
+```graphql
+mutation { reportGetSpaceToken }
+```
+
+Returns a JWT. Decode the middle segment (base64url-decode → JSON-parse) and read the `sub` claim — that's the `spaceId` reportgo expects as `default.spaceId` for every analytics call. The JWT also has an `exp` claim (the MCP handles refresh transparently, but the value is useful if you decode manually).
+
+Cache `spaceId` and `taskId` for the whole conversation; don't re-fetch them per query.
 
 ---
 
 ## Analytics (service: "gsc")
 
-### Summary
+### `scAnalytics` — aggregated metrics for the range
+
 ```graphql
-query GscSummary($filter: GscFilter!) {
-  gscSummary(filter: $filter) {
-    TotalClicks
-    TotalImpressions
-    AvgCtr
-    AvgPosition
-    ClicksTrend { date value }
-    ImpressionsTrend { date value }
+query ScAnalytics($input: ScAnalyticInput!) {
+  scAnalytics(input: $input) {
+    dated
+    year
+    quarter
+    month
+    week
+    day
+    clicks
+    impressions
+    ctr
+    position
   }
 }
 ```
 
-Variables:
+Single aggregated row when `groupByFields: []` and `groupByDate: false`. Add `groupByDate: true` + `dateArgs` for time series (returns one row per period).
+
+Variables — last-28-day summary:
 ```json
 {
-  "filter": {
-    "StartDate": "2026-04-27",
-    "EndDate": "2026-05-24"
+  "input": {
+    "default": {
+      "spaceId": "<from reportGetSpaceToken.sub>",
+      "taskId": "<from gscConnection.reTaskId>",
+      "startDate": "2026-04-27",
+      "endDate": "2026-05-24",
+      "groupByFields": [],
+      "groupByDate": false
+    }
   }
 }
 ```
 
-### Queries (top search terms)
+Variables — daily time series for 60 days:
+```json
+{
+  "input": {
+    "default": {
+      "spaceId": "<...>",
+      "taskId": "<...>",
+      "startDate": "2026-03-25",
+      "endDate": "2026-05-24",
+      "groupByFields": [],
+      "groupByDate": true,
+      "dateArgs": [{ "groupBy": "DAY", "orderBy": "ASC" }]
+    }
+  }
+}
+```
+
+### `scTraffics` — un-paginated rows grouped by dimension
+
 ```graphql
-query GscQueries($filter: GscFilter!, $first: Int, $after: String) {
-  gscQueries(filter: $filter, first: $first, after: $after) {
+query ScTraffics($input: ScTrafficInput!) {
+  scTraffics(input: $input) {
+    dated
+    queried
+    urlId
+    countryIso3
+    deviceId
+    clicks
+    impressions
+    ctr
+    position
+  }
+}
+```
+
+Returns all matching rows in one call. Use `scTrafficsPaginated` instead when you need paging or a large result set.
+
+### `scTrafficsPaginated` — paginated rows grouped by dimension
+
+```graphql
+query ScTrafficsPaginated($input: ScTrafficInput!) {
+  scTrafficsPaginated(input: $input) {
+    totalCount
+    totalPage
+    currentPage
     nodes {
-      query
+      dated
+      queried
+      urlId
+      countryIso3
+      deviceId
       clicks
       impressions
       ctr
       position
     }
-    pageInfo {
-      hasNextPage
-      hasPreviousPage
-      startCursor
-      endCursor
-    }
-    totalCount
   }
 }
 ```
 
-Variables — non-branded queries, mobile, last 28 days, sorted by clicks server-side:
+Variables — top 50 queries by clicks, non-branded, mobile, last 28 days:
 ```json
 {
-  "filter": {
-    "StartDate": "2026-04-27",
-    "EndDate": "2026-05-24",
-    "Device": "MOBILE",
-    "QueryNotContains": "<brand>"
-  },
-  "first": 50
+  "input": {
+    "default": {
+      "spaceId": "<...>",
+      "taskId": "<...>",
+      "startDate": "2026-04-27",
+      "endDate": "2026-05-24",
+      "groupByFields": ["queried"],
+      "orderByFields": ["clicks DESC"]
+    },
+    "deviceId": 2,
+    "brandFilter": "NON_BRANDED",
+    "brandRules": [{ "operator": "CONTAINS", "value": "saint bernard" }],
+    "limit": 50,
+    "page": 1
+  }
 }
 ```
 
-### Pages
+Variables — top 50 pages under `/collections/` with position 11–30:
+```json
+{
+  "input": {
+    "default": {
+      "spaceId": "<...>",
+      "taskId": "<...>",
+      "startDate": "2026-04-27",
+      "endDate": "2026-05-24",
+      "groupByFields": ["url_id"],
+      "orderByFields": ["clicks DESC"]
+    },
+    "pageContains": "/collections/",
+    "positionMin": 11,
+    "positionMax": 30,
+    "limit": 50,
+    "page": 1
+  }
+}
+```
+
+### `scBrandRules` — read current branded-search rules
+
 ```graphql
-query GscPages($filter: GscFilter!, $first: Int, $after: String) {
-  gscPages(filter: $filter, first: $first, after: $after) {
-    nodes {
-      page
-      clicks
-      impressions
-      ctr
-      position
-    }
-    pageInfo {
-      hasNextPage
-      hasPreviousPage
-      startCursor
-      endCursor
-    }
-    totalCount
-  }
+query ScBrandRules($taskId: String!) {
+  scBrandRules(taskId: $taskId) { operator value }
 }
 ```
 
-Variables — pages under a specific path, position 11–30:
-```json
-{
-  "filter": {
-    "StartDate": "2026-04-27",
-    "EndDate": "2026-05-24",
-    "PageContains": "/collections/",
-    "QueryPositionMin": 11,
-    "QueryPositionMax": 30
-  },
-  "first": 50
+`taskId` is the same `reTaskId` from `gscConnection`.
+
+### `scBrandRulesUpdate` — write rules (mutation; rarely needed via MCP)
+
+```graphql
+mutation ScBrandRulesUpdate($taskId: String!, $input: ScBrandRulesUpdateInput!) {
+  scBrandRulesUpdate(taskId: $taskId, input: $input) { operator value }
 }
 ```
+
+Not exposed in the read-only flow above. If a user explicitly asks to redefine their brand rules, this mutation is available; confirm with the user before writing.
 
 ---
 
-## `GscFilter` reference
+## `ScTrafficInput` reference
+
+`default` (`StandardQueryInput!`) is required on every analytics call. Top-level fields are optional filters and pagination.
+
+### `default: StandardQueryInput!`
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `StartDate` | `String!` | YYYY-MM-DD |
-| `EndDate` | `String!` | YYYY-MM-DD |
-| `Device` | `String` | `DESKTOP`, `MOBILE`, `TABLET` |
-| `Country` | `String` | ISO country code (e.g. `USA`, `GBR`) |
-| `QueryContains` | `String` | Case-insensitive substring filter on the query text |
-| `QueryNotContains` | `String` | Substring to exclude — useful for non-branded filtering |
-| `QueryPositionMin` | `Int` | Minimum average position |
-| `QueryPositionMax` | `Int` | Maximum average position |
-| `PageContains` | `String` | Substring filter on the page URL |
+| `spaceId` | `String!` | From `reportGetSpaceToken` JWT `sub` claim |
+| `taskId` | `String` | From `gscConnection.reTaskId` |
+| `refId` | `String` | Optional reference identifier |
+| `startDate` | `String` | YYYY-MM-DD |
+| `endDate` | `String` | YYYY-MM-DD |
+| `groupByFields` | `[String!]` | One or more of: `queried`, `url_id`, `country_iso3`, `device_id` |
+| `groupByDate` | `Boolean` | True for time series; pairs with `dateArgs` |
+| `dateArgs` | `[DateArgs]` | `{ groupBy: Calendar, orderBy: SortDirection, filterFrom: Int, filterTo: Int }` |
+| `orderByFields` | `[String!]` | e.g. `["clicks DESC"]`, `["position ASC"]` |
+
+`Calendar` enum: `YEAR`, `MONTH`, `QUARTER`, `WEEK`, `DAY`.
+
+### Top-level filters on `ScTrafficInput`
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `queryExact` | `String` | Exact query match (case-insensitive) |
+| `queryContains` | `String` | Substring (case-insensitive) |
+| `queries` | `[String!]` | Multi-term match |
+| `queryOperator` | `ScQueryOperator` | `AND` / `OR` for `queries` |
+| `pageExact` | `String` | Exact page URL |
+| `pageContains` | `String` | Substring of page URL |
+| `pageTypes` | `[PageType!]` | Risify page-type filter |
+| `countryIso3` | `String` | ISO3 country code |
+| `deviceId` | `Uint32` | 1=desktop, 2=mobile, 3=tablet |
+| `positionMin` / `positionMax` | `Float` | Average position range (applied after aggregation) |
+| `brandFilter` | `BrandFilter` | `BRANDED` / `NON_BRANDED` |
+| `brandRules` | `[ScBrandRuleInput!]` | Inline rules `{ operator, value }` |
+| `limit` | `Int` | Page size (paginated only) |
+| `page` | `Int` | 1-indexed page number (paginated only) |
+| `sort` | `[ScTrafficSort!]` | Type-safe sort (overrides `default.orderByFields`) |
+
+### `ScAnalyticInput`
+
+Same shape as `ScTrafficInput` but the response is the aggregated `[ScAnalytic!]!` shape (no `queried`/`urlId`/`countryIso3`/`deviceId` columns on the row itself — group via `default.groupByFields` if you want them).
+
+---
 
 ## Response shapes
 
-### GscSummary
+### `ScAnalytic`
 | Field | Type | Notes |
 |-------|------|-------|
-| `TotalClicks` | Int | Sum over range |
-| `TotalImpressions` | Int | Sum over range |
-| `AvgCtr` | Float | 0..1 (multiply by 100 for percent) |
-| `AvgPosition` | Float | Lower is better |
-| `ClicksTrend` | `[GscTrendPoint!]` | `{ date: String, value: Int }` |
-| `ImpressionsTrend` | `[GscTrendPoint!]` | `{ date: String, value: Int }` |
+| `dated` | `Date` | Period anchor (null when not grouping by date) |
+| `year` / `quarter` / `month` / `week` / `day` | `Int!` | Calendar components |
+| `clicks` | `Int64!` | |
+| `impressions` | `Int64!` | |
+| `ctr` | `Float!` | Percent value (e.g. 0.71 → 0.71%) |
+| `position` | `Float!` | Avg position; lower is better |
 
-### GscQueryRow / GscPageRow
+### `ScTraffic`
 | Field | Type | Notes |
 |-------|------|-------|
-| `query` (rows only) | String | Search term |
-| `page` (pages only) | String | Page URL |
-| `clicks` | Int | |
-| `impressions` | Int | |
-| `ctr` | Float | 0..1 |
-| `position` | Float | Avg position |
+| `dated` | `Date` | |
+| `year`/`quarter`/`month`/`week`/`day` | Int components | |
+| `queried` | `String!` | Search query |
+| `urlId` | `String!` | Page URL |
+| `countryIso3` | `String!` | Country |
+| `deviceId` | `Uint32!` | 1=desktop, 2=mobile, 3=tablet |
+| `clicks` | `Int64!` | |
+| `impressions` | `Int64!` | |
+| `ctr` | `Float!` | Percent value |
+| `position` | `Float!` | |
+
+### `ScTrafficsPaginated`
+| Field | Type | Notes |
+|-------|------|-------|
+| `totalCount` | `Int!` | |
+| `totalPage` | `Int!` | |
+| `currentPage` | `Int!` | |
+| `nodes` | `[ScTraffic!]!` | |
+
+---
 
 ## Pagination
 
-All connections follow the Relay/Shopify pattern: `pageInfo { hasNextPage, endCursor }` plus `nodes`. To page forward, pass `after: pageInfo.endCursor`. Default `first` is server-defined — pass `first: 50` or `100` for analytics.
+`scTrafficsPaginated` uses offset pagination — `limit`+`page` on input, `totalCount`/`totalPage`/`currentPage` on output. The reportgo schema does not currently expose a Relay-style cursor connection for SC.
 
 ## Sorting
 
-Analytics rows come pre-sorted by clicks descending. The MCP does not yet expose a `sortBy` arg — sort client-side after fetching enough pages.
+Use `default.orderByFields: ["<field> DESC|ASC"]` for legacy string-based sort, or the typed `sort: [{ field: ScTrafficSortField, direction: SortDirection }]` argument when typed-codegen ergonomics matter. When both are present, `sort` takes precedence.
 
 ## Notes
 
 - Date freshness: Google typically lags 24–48 hours. A range that ends "today" may return less than expected.
 - Empty result is normal for new sites or low-traffic stores.
-- The connection JWT used by this service is minted transparently — you don't need to handle tokens.
-- Mutations are not exposed here. Connection management (connect/disconnect/switch site) happens in the Risify Settings UI; if a user asks the agent to "connect GSC", direct them to that page.
+- The `token` header used to authenticate against reportgo is minted by the MCP transparently — you don't need to handle it directly. Decode the same token's `sub` claim only to read `spaceId`.
+- Mutations beyond `scBrandRulesUpdate` are not exposed here. Connection management (connect/disconnect/switch site) happens in the Risify Settings UI; if a user asks the agent to "connect GSC", direct them there.
