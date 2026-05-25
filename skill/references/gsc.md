@@ -1,114 +1,183 @@
 # Flow: Google Search Console (GSC) Analytics
 
-Analyze Google Search Console performance — search queries, page-level metrics, clicks, impressions, CTR, and average position over time. All read-only analytics; connection management stays in the Risify Settings page.
+Analyze Google Search Console performance through the reportgo service — clicks, impressions, CTR, average position, and aggregated metrics over time, broken down by query / page / device / country. All read-only analytics; connection management stays in the Risify Settings page.
 
 ## Architecture
 
-GSC analytics live on a separate service from the main Risify API. The MCP routes them automatically — pass `service: "gsc"` to `execute_graphql` and `introspect_schema` when querying GSC analytics. Use `service: "risify"` (the default) when checking GSC connection status or listing connected sites.
+GSC analytics live on a separate service (reportgo) from the main Risify API. The MCP routes them automatically — pass `service: "gsc"` to `execute_graphql` and `introspect_schema` when querying GSC analytics. Use `service: "risify"` (the default) when checking GSC connection status or listing connected sites.
+
+**Two key identifiers** every GSC analytics query needs:
+
+- **`spaceId`** — multi-tenant isolation identifier on reportgo. Get it once per session by minting the space token and decoding its JWT `sub` claim (see step 2 below). The MCP doesn't expose this directly — fetch it yourself with one extra call.
+- **`taskId`** — the GSC sync task on reportgo, returned as `reTaskId` from the `gscConnection` query on `service: "risify"`. Fetch it once and reuse for every analytics call.
 
 ## Capabilities
 
-### 1. Check that GSC is connected (before any analytics call)
+### 1. Check that GSC is connected and get `reTaskId` (always first)
 
-Always check the connection first. This call goes to the **Risify** API, not the GSC service.
+Goes to the **Risify** API.
 
 ```graphql
-query { gscConnection { id status email siteUrl connectedAt } }
+query { gscConnection { id status email siteUrl reTaskId } }
 ```
 
-- `status` of `connected` / `active` means analytics queries will work.
-- If `gscConnection` returns `null` or any other status: tell the user GSC isn't connected and to set it up from the Risify Settings page (Search Console section). Don't try analytics queries until they reconnect.
+- `status: "enabled"` means analytics queries will work.
+- If `gscConnection` is `null` or any other status: tell the user GSC isn't connected and to set it up from Risify Settings → Search Console. Don't try analytics queries.
+- Save `reTaskId` — every analytics query needs it as `taskId`.
 
-### 2. Get a summary (totals + trends)
+### 2. Get the `spaceId` (once per session)
 
-`service: "gsc"`.
+Mint the report space token, then decode the JWT's `sub` claim.
 
 ```graphql
-query Summary($filter: GscFilter!) {
-  gscSummary(filter: $filter) {
-    TotalClicks
-    TotalImpressions
-    AvgCtr
-    AvgPosition
-    ClicksTrend { date value }
-    ImpressionsTrend { date value }
+mutation { reportGetSpaceToken }
+```
+
+Returns a JWT string like `eyJhbGciOi…`. Split on `.`, take the middle segment, base64url-decode it, parse JSON, read `sub` — that's the spaceId. Reuse it for every analytics call in this conversation.
+
+Cache both `spaceId` and `taskId` in the conversation; don't re-fetch them per query.
+
+### 3. Summary (single aggregated row across the range)
+
+`service: "gsc"`. The reportgo schema calls this `scAnalytics`. With `groupByFields: []` and `groupByDate: false`, you get a single aggregated row over the whole range.
+
+```graphql
+query($input: ScAnalyticInput!) {
+  scAnalytics(input: $input) {
+    dated clicks impressions ctr position
   }
 }
 ```
 
-Variables (defaults: last 28 days):
+Variables (defaults: last 28 days, ending two days ago):
 ```json
-{ "filter": { "StartDate": "YYYY-MM-DD", "EndDate": "YYYY-MM-DD" } }
+{
+  "input": {
+    "default": {
+      "spaceId": "<from-step-2>",
+      "taskId": "<from-step-1>",
+      "startDate": "2026-04-27",
+      "endDate": "2026-05-24",
+      "groupByFields": [],
+      "groupByDate": false
+    }
+  }
+}
 ```
 
 Output template:
 ```
-**Search Console — {StartDate} to {EndDate}**
-Clicks: {TotalClicks}  •  Impressions: {TotalImpressions}
-CTR: {AvgCtr*100}%      •  Avg position: {AvgPosition}
+**Search Console — {startDate} to {endDate}**
+Clicks: {clicks}  •  Impressions: {impressions}
+CTR: {ctr}%       •  Avg position: {position}
 ```
 
-### 3. Top queries by clicks/impressions
+Note: `ctr` comes back as a percentage already (e.g. `0.71` means 0.71%, not 71%). Do not multiply by 100.
 
-`service: "gsc"`.
+### 4. Top queries by clicks
+
+`service: "gsc"`. Group by `queried` and order by `clicks DESC`.
 
 ```graphql
-query TopQueries($filter: GscFilter!, $first: Int, $after: String) {
-  gscQueries(filter: $filter, first: $first, after: $after) {
-    nodes { query clicks impressions ctr position }
-    pageInfo { hasNextPage endCursor }
-    totalCount
+query($input: ScTrafficInput!) {
+  scTrafficsPaginated(input: $input) {
+    totalCount currentPage totalPage
+    nodes { queried clicks impressions ctr position }
   }
 }
 ```
 
-Defaults: `first: 20`, last 28 days. Present as a Markdown table sorted by the metric the user asked for (clicks unless they say "impressions" / "rank"). If asked for "top movers", run the query twice (current period + previous period of equal length) and join on `query`.
-
-### 4. Top pages
-
-`service: "gsc"`.
-
-```graphql
-query TopPages($filter: GscFilter!, $first: Int, $after: String) {
-  gscPages(filter: $filter, first: $first, after: $after) {
-    nodes { page clicks impressions ctr position }
-    pageInfo { hasNextPage endCursor }
-    totalCount
+Variables:
+```json
+{
+  "input": {
+    "default": {
+      "spaceId": "<...>",
+      "taskId": "<...>",
+      "startDate": "2026-04-27",
+      "endDate": "2026-05-24",
+      "groupByFields": ["queried"],
+      "orderByFields": ["clicks DESC"]
+    },
+    "limit": 50,
+    "page": 1
   }
 }
 ```
 
-### 5. CTR opportunities (high impressions, low CTR)
+For "top by impressions" use `orderByFields: ["impressions DESC"]`. For "top by CTR" use `["ctr DESC"]`. For "best avg position" use `["position ASC"]` (lower is better).
 
-Use `gscQueries` with default range, then in code/Markdown filter `nodes` to those with `impressions >= 500` and `ctr < 0.02` and `position <= 20`. Surface as "queries that show often but don't get clicked — title/meta refresh candidates".
+### 5. Top pages
 
-### 6. Position changes (week-over-week)
+Same query, group by `url_id` instead:
 
-1. Call `gscQueries` once with last 7 days.
-2. Call `gscQueries` once with the 7 days before that.
-3. Inner-join on `query`, compute `position_delta = previous.position - current.position` (positive = improved). Sort descending.
+```json
+{ "input": { "default": { ..., "groupByFields": ["url_id"], "orderByFields": ["clicks DESC"] } } }
+```
 
-## Filters available on `GscFilter`
+`urlId` in the response is the page URL.
 
-| Field | Type | Notes |
-|-------|------|-------|
-| `StartDate` | String! | YYYY-MM-DD |
-| `EndDate` | String! | YYYY-MM-DD |
-| `Device` | String | `DESKTOP`, `MOBILE`, `TABLET` |
-| `Country` | String | ISO-3 country code (`USA`, `GBR`, etc.) |
-| `QueryContains` | String | Case-insensitive substring |
-| `QueryNotContains` | String | Substring to exclude (use for "non-branded" filter) |
-| `QueryPositionMin` / `QueryPositionMax` | Int | Position range bound |
-| `PageContains` | String | Substring of URL |
+### 6. By device / country
 
-When the user says "branded" without specifying, infer the brand from `me.shopName` (Risify API). For "non-branded" pass that token as `QueryNotContains`.
+`groupByFields: ["device_id"]` or `["country_iso3"]`. Combine: `["queried", "device_id"]` for query × device breakdown. The response carries `deviceId` (1=desktop, 2=mobile, 3=tablet) and `countryIso3`.
+
+### 7. Filter to specific queries / pages
+
+Use the top-level filters on `ScTrafficInput` (these apply before aggregation):
+
+| Filter | Effect |
+|---|---|
+| `queryExact: "saint bernard"` | Match a single query exactly |
+| `queryContains: "boot"` | Substring match on the query |
+| `queries: ["a", "b"]` + `queryOperator: AND \| OR` | Multi-query match |
+| `pageExact: "/collections/x"` | Exact page URL |
+| `pageContains: "/collections/"` | Substring match on page |
+| `pageTypes: [...]` | Risify page-type filter |
+| `countryIso3: "USA"` | ISO3 country |
+| `deviceId: 2` | Raw device id (1 desktop, 2 mobile, 3 tablet) |
+| `positionMin: 11, positionMax: 30` | Average position range, applied after aggregation |
+| `brandFilter: BRANDED \| NON_BRANDED` + `brandRules: [...]` | Brand-vs-non-brand split |
+
+Default branded/non-branded split: if you need it and `brandRules` aren't set in the account, infer the brand from `me.shopName` (Risify API) and pass it as a temporary rule.
+
+### 8. CTR opportunities (high impressions, low CTR)
+
+Pull top queries with a wide enough range to surface volume, then filter to rows with `impressions >= 500` and `ctr < 0.5` (i.e. under 0.5%) and `position <= 20`. Surface as "queries that show often but don't get clicked — title/meta refresh candidates".
+
+### 9. Week-over-week position changes
+
+1. Run top-queries query for current 7 days.
+2. Run the same query for the prior 7 days.
+3. Inner-join on `queried`, compute `position_delta = previous.position - current.position` (positive = improved). Sort descending.
+
+### 10. Time series (trends)
+
+Add `groupByDate: true` and a `dateArgs` entry with the granularity you want:
+
+```json
+{
+  "input": {
+    "default": {
+      "spaceId": "<...>",
+      "taskId": "<...>",
+      "startDate": "2026-03-25",
+      "endDate": "2026-05-24",
+      "groupByFields": [],
+      "groupByDate": true,
+      "dateArgs": [{ "groupBy": "DAY", "orderBy": "ASC" }]
+    }
+  }
+}
+```
+
+Granularities: `DAY`, `WEEK`, `MONTH`, `QUARTER`, `YEAR`. The response carries `dated` plus the calendar components (`year`, `quarter`, `month`, `week`, `day`).
 
 ## Date conventions
 
-- Always pass `YYYY-MM-DD` strings.
-- Default range: last 28 days ending two days ago (GSC has ~48h reporting lag).
+- All dates are `YYYY-MM-DD` strings.
+- Default range: last 28 days ending two days ago (Google has ~48h reporting lag).
 - For "last month" use the previous calendar month.
-- For "this week" / "last 7 days" use a rolling 7-day window.
+- For "this week" / "last 7 days" use a rolling 7-day window ending two days ago.
 
 ## Output templates
 
@@ -129,12 +198,12 @@ Week-over-week movers table:
 
 | Situation | Response |
 |-----------|----------|
-| `gscConnection` is null or `status != connected` | "Search Console isn't connected. Open Risify Settings → Search Console to connect it." Do not call analytics queries. |
-| Token mint fails (auth) | "I can't reach Search Console right now. Try reconnecting it in Risify Settings." |
+| `gscConnection` is null or `status != "enabled"` | "Search Console isn't connected. Open Risify Settings → Search Console to connect it." Do not call analytics queries. |
+| Token mint fails / 401 | "I can't reach Search Console right now. Try reconnecting it in Risify Settings." |
 | Empty results | "No Search Console data for that range — Google takes about 48 hours to report new data, and very low-traffic stores may have nothing to show yet." |
-| Subscription required | Some accounts gate GSC behind a paid plan. If the API surfaces a plan error, show plans (see `account.md`). |
+| `spaceId` required error | The space token mint failed silently; re-fetch via `reportGetSpaceToken` and re-decode. |
 
 ## See also
 
-- `gsc-operations.md` — full GraphQL queries with all fields.
+- `gsc-operations.md` — full GraphQL queries with all input fields and response shapes.
 - `account.md` — checking AI credits / plan if a feature is plan-gated.
