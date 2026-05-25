@@ -326,3 +326,222 @@ This is the marketing-team workflow: a spreadsheet maps owner resources (collect
 **Note:** For stores with many collections, this requires one API call per collection. Process in batches and show progress: "Fetched products for {N} of {total} collections..."
 
 **Flows involved:** Shopify data export (collections + products)
+
+---
+
+## Category 9: GSC & Keyword Cross-Flows
+
+Search Console and Keyword Tracking data only become powerful when joined with the content you can actually change — meta tags, FAQs, audit findings. These recipes chain `service: "gsc"` / `service: "keyword"` reads against Risify writes.
+
+> **Prerequisites checked once per session:**
+> 1. GSC: `query { gscConnection { status reTaskId } }` on `service: risify` — bail with "Search Console isn't connected" if `status != "enabled"`. Save `reTaskId`.
+> 2. GSC: `mutation { reportGetSpaceToken }` on `service: risify`, decode the JWT middle segment, take `sub` — that's the `spaceId`. Save it.
+> 3. Keyword: `mutation { keywordUserUpsert { id } }` on `service: risify` — idempotent; ensures the user is provisioned on the keyword service.
+
+See `gsc.md` and `keywords.md` for the full vocabulary.
+
+### Recipe 19: High-impression low-CTR pages → meta-tag refresh
+
+**Trigger:** "Find pages that show up in search but don't get clicked", "Which pages need better meta tags?", "Pages losing clicks despite good rankings", "Meta-tag refresh candidates from Search Console"
+
+**Idea:** Pages that Google shows often but users skip past usually have weak titles or descriptions. Pull them from GSC, then route them through the existing meta-tag generation flow.
+
+**Steps:**
+
+1. Pull top GSC pages by impressions for the last 28 days (`service: "gsc"`):
+   ```graphql
+   query($input: ScTrafficInput!) {
+     scTrafficsPaginated(input: $input) {
+       totalCount
+       nodes { urlId clicks impressions ctr position }
+     }
+   }
+   ```
+   Variables:
+   ```json
+   { "input": {
+       "default": {
+         "spaceId": "<from-step-2-of-prereq>",
+         "taskId": "<from-step-1-of-prereq>",
+         "startDate": "<28 days ago>",
+         "endDate": "<2 days ago>",
+         "groupByFields": ["url_id"],
+         "orderByFields": ["impressions DESC"]
+       },
+       "limit": 100, "page": 1
+   }}
+   ```
+
+2. **In the response, filter to opportunity rows:** `impressions >= 500` AND `ctr < 0.5` (i.e. under 0.5%) AND `position <= 20`. These are the pages where Google is willing to show you but users aren't clicking.
+
+3. For each candidate URL, extract the handle and resolve to a Shopify GID (same approach as Recipe 1, step 4):
+   ```graphql
+   { shopifyProductsConnection(args: { first: 5, query: "handle:<handle>" }) { nodes { id title } } }
+   ```
+   Or `shopifyCollectionsConnection` for `/collections/...` URLs.
+
+4. Present the opportunity table:
+   ```
+   | URL | Impr. | CTR | Pos. | Suggested action |
+   |---|---:|---:|---:|---|
+   | /products/{handle} | 12,400 | 0.34% | 8.2 | Refresh title + description |
+   ```
+
+5. Ask: "Generate new meta titles and descriptions for these {N} pages?"
+
+6. On confirmation, follow `meta.md` Steps 3–6 with the collected GIDs (uses the standard meta-tag generation flow; no new operations).
+
+7. After applying → offer: "Want me to check these pages again in a week to see if CTR improved?"
+
+**Flows involved:** GSC analytics → Shopify resource lookup → Meta Tags
+
+**Caveat:** The recipe only finds pages that are *currently indexed* in GSC. New pages with no impressions won't show up — for those, use the audit-driven Recipe 1 instead.
+
+---
+
+### Recipe 20: GSC question-shaped queries → FAQ generation candidates
+
+**Trigger:** "Find FAQ ideas from search", "What questions are people searching for?", "Turn Search Console queries into FAQs", "FAQ topics from GSC"
+
+**Idea:** When real shoppers search for a question phrase (and Google shows your store), that's a confirmed information need. Generate FAQs that answer those queries.
+
+**Steps:**
+
+1. Pull top GSC queries by impressions for the last 28 days (`service: "gsc"`):
+   ```graphql
+   query($input: ScTrafficInput!) {
+     scTrafficsPaginated(input: $input) {
+       nodes { queried clicks impressions ctr position }
+     }
+   }
+   ```
+   Variables: `groupByFields: ["queried"]`, `orderByFields: ["impressions DESC"]`, `limit: 200`.
+
+2. Filter for question shapes in `queried`. Match queries that:
+   - Start with `how`, `what`, `why`, `when`, `where`, `which`, `who`, `does`, `do`, `can`, `is`, `are`, `should`, OR
+   - End with `?`, OR
+   - Contain a "how to" / "vs" / "difference between" / "size guide" / "fit" phrase.
+
+3. **Sort by impressions desc, dedupe close variants** (e.g. "saint bernard size guide" and "st bernard size guide" → keep the higher-impression one), keep the top 20.
+
+4. For each candidate query, suggest the right owner resource. Typically:
+   - If the query mentions a product type → resolve to a collection or product via `shopifyProductsConnection` / `shopifyCollectionsConnection` (Recipe 1, step 4 pattern).
+   - If the query is general policy ("return policy", "shipping time") → owner is the shop itself; FAQ goes on a generic page or the home metaobject.
+
+5. Present the table:
+   ```
+   | Query | Impr. | CTR | Suggested owner |
+   |---|---:|---:|---|
+   | how to wash a wool coat | 4,200 | 1.1% | /collections/wool-coats |
+   ```
+
+6. Ask: "Generate FAQs for these {N} questions?"
+
+7. On confirmation, follow `faq.md` generation flow per (query, owner) pair. The query becomes the FAQ question; the agent generates the answer with the standard `faqGenerate` operations.
+
+**Flows involved:** GSC analytics → Shopify resource lookup → FAQ Generation
+
+**Caveat:** Don't auto-publish — FAQs need a human review pass before going live. End at "preview" / "draft", offer the user a one-click bulk publish.
+
+---
+
+### Recipe 21: GSC-prioritized audit issues (fix what actually has traffic)
+
+**Trigger:** "Which audit issues matter most?", "Prioritize my SEO issues by traffic", "Don't show me low-impact problems", "What audit issues should I fix first?"
+
+**Idea:** A 5,000-issue audit is noise. Cross-reference each issue's URL with GSC impressions and surface only the issues on pages that actually get search traffic.
+
+**Steps:**
+
+1. Run or retrieve the latest audit (see `audit.md` Steps 1–5).
+
+2. Pull all audit issues with URLs attached (`service: risify`):
+   ```graphql
+   query { auditMetaIssuesConnection(args: { first: 100, query: "auditId:<audit-id>" }) {
+     nodes { url issue impact location }
+     pageInfo { hasNextPage endCursor totalCount }
+   } }
+   ```
+   Paginate via `endCursor` until exhausted. Build a set of unique URLs across all issues.
+
+3. Pull GSC traffic per URL for the same set (`service: "gsc"`):
+   ```graphql
+   query($input: ScTrafficInput!) {
+     scTrafficsPaginated(input: $input) {
+       nodes { urlId impressions clicks ctr position }
+     }
+   }
+   ```
+   Variables: `groupByFields: ["url_id"]`, last 28 days, `limit: 500`. Build a `url → { impressions, clicks }` map from the response. Pages with no entry have 0 search traffic.
+
+4. **Score each issue** as `traffic_score = impressions + 10 * clicks` (clicks weighted higher since they're committed users). Multiply by `impact_weight` from the audit (`HIGH: 3, MEDIUM: 2, LOW: 1`) → final priority score.
+
+5. Sort issues by score desc, drop the bottom 80% (everything below 100 impressions and HIGH-impact + nonzero impressions, or LOW-impact even at 1k impressions, is noise for the first pass).
+
+6. Present the prioritized table:
+   ```
+   | Page | Issue | Impact | Search traffic | Why first |
+   |---|---|---|---:|---|
+   | /products/x | Missing meta title | HIGH | 8,200 impr / 56 clicks | High-impact + real traffic |
+   ```
+
+7. Ask: "Fix the top {N} issues? Drops {M} low-traffic issues for later."
+
+8. On confirmation, dispatch by issue type:
+   - Meta-tag issues → Recipe 1 (Audit → Meta) over the selected URLs.
+   - FAQ-related issues → `faq.md` generation flow.
+   - Other categories → present them individually.
+
+**Flows involved:** Audit → GSC analytics → (Meta Tags | FAQ | other)
+
+**Caveat:** Issues on pages newly created or never indexed will have 0 GSC traffic and get deprioritized — that's correct for the "fix what has traffic" frame but the user should still see them eventually. Offer a "Show me the deprioritized issues" follow-up.
+
+---
+
+### Recipe 22: Tracked keyword drops → landing-page audit + meta refresh
+
+**Trigger:** "Why did my keywords drop?", "Which keywords lost ranking?", "Investigate keyword drops", "Audit pages for keywords that fell"
+
+**Idea:** When a tracked keyword loses positions week-over-week, the landing page Google's actually ranking for it might have regressed (slow page, broken meta, removed content). Pull the page, audit it, propose meta fixes.
+
+**Steps:**
+
+1. List the user's catalogues (`service: "keyword"`):
+   ```graphql
+   { catalogues(input: { limit: 10, page: 1 }) { catalogues { id name edges { domain { host } country { name } } } } }
+   ```
+   If there's just one, pick it; otherwise ask the user.
+
+2. Pull tracked keywords with current + previous position (`service: "keyword"`):
+   ```graphql
+   query { catalogueItems(input: { catalogueId: "<id>", limit: 100, page: 1 }) {
+     items { id keyword { keyword url } position day7 day30 frequency }
+   } }
+   ```
+
+3. **Find drops:** filter rows where `day7 - position >= 3` AND `position <= 50` (was tracking, now significantly worse, still on the radar). Sort by drop size desc, keep top 10.
+
+4. For each drop, pull the ranking URL from `keyword.url`. If empty (no current ranking page), fall back to GSC: query `scTrafficsPaginated` filtered by `queryExact: "<keyword>"`, take the top-clicks page from the response.
+
+5. For each (keyword, URL) pair:
+   - Resolve URL → Shopify GID (Recipe 1, step 4 pattern).
+   - Pull audit issues for that URL: `query { auditMetaIssuesConnection(args: { first: 20, query: "auditId:<latest>, url:<url>" }) { nodes { issue impact } } }`.
+   - Pull current meta tags from Shopify for that resource (see `meta.md` Step 2).
+
+6. Present per-keyword diagnosis:
+   ```
+   **{keyword}** — Pos {day7} → {position} (Δ {drop})
+   Landing page: {url}
+   Audit issues: {N} ({list-top-3})
+   Current title: "{shopify-title}"
+   Suggested action: {Refresh meta | Fix audit issue | No obvious issue, monitor}
+   ```
+
+7. Group by action:
+   - "Refresh meta" → ask: "Regenerate meta tags for these {N} pages?" → meta flow.
+   - "Fix audit issue" → ask: "Address these audit issues?" → Recipe 1.
+   - "No obvious issue, monitor" → note for the user; no action.
+
+**Flows involved:** Keyword Tracking → (GSC fallback) → Shopify resource lookup → Audit → Meta Tags
+
+**Caveat:** Works only on catalogues with tracked keywords. If `catalogueItems` returns empty, the user hasn't added keywords yet — direct them to the Risify Keyword Tracking page rather than trying to recover via GSC alone.

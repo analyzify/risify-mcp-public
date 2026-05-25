@@ -103,6 +103,10 @@ Match the user's request to the right flow:
 | "How's my SEO doing?" / "Compare audits" | Recipe 15: SEO Health Check |
 | "What can I do with my credits?" | Recipe 16: Credit-Aware Planning |
 | "This isn't working" / "I need help" | Recipe 17: Support Escalation |
+| "Pages losing clicks despite rankings" / "High-impression low-CTR pages" / "Meta refresh from Search Console" | Recipe 19: High-impression low-CTR pages → meta-tag refresh |
+| "FAQ ideas from search" / "What questions are people searching for" / "Turn GSC queries into FAQs" | Recipe 20: GSC question-shaped queries → FAQ candidates |
+| "Prioritize audit issues by traffic" / "Which audit issues matter most" / "Fix what has traffic" | Recipe 21: GSC-prioritized audit issues |
+| "Why did my keywords drop" / "Investigate keyword ranking drops" / "Audit pages for keywords that fell" | Recipe 22: Tracked keyword drops → landing-page audit + meta refresh |
 
 ## Available Flows
 
