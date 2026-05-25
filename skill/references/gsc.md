@@ -22,6 +22,12 @@ There are **two tiers** of GSC operations on reportgo:
 
 Cache both for the conversation; don't re-fetch them per query.
 
+> **Common mistakes when first reaching for GSC** (don't repeat these):
+> - `me { spaceId }` — `MeInfo` has no `spaceId` field by design. spaceId lives only in the reportgo JWT.
+> - `spaceList` / `gscSpaces` — not real queries; don't exist.
+> - Passing the Risify user id (`me.id`) as `spaceId` — different identifier; reportgo will reject with `spaceID cannot be empty` or return empty rows.
+> - Searching the `gsc` schema for `gscConnection` — connection management lives on `service: "risify"`, not `service: "gsc"`. Search the `risify` schema instead, or just call `{ gscConnection { reTaskId } }` directly.
+
 ## Capabilities
 
 ### 1. Check that GSC is connected and get `reTaskId` (always first)
