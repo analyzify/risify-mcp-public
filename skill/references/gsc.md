@@ -1,15 +1,26 @@
 # Flow: Google Search Console (GSC) Analytics
 
-Analyze Google Search Console performance through the reportgo service — clicks, impressions, CTR, average position, and aggregated metrics over time, broken down by query / page / device / country. All read-only analytics; connection management stays in the Risify Settings page.
+Analyze Google Search Console performance through the reportgo service — clicks, impressions, CTR, and average position, by overall summary, query, or page, with optional period-over-period comparison. All read-only analytics; connection management stays in the Risify Settings page.
 
 ## Architecture
 
-GSC analytics live on a separate service (reportgo) from the main Risify API. The MCP routes them automatically — pass `service: "gsc"` to `execute_graphql` and `introspect_schema` when querying GSC analytics. Use `service: "risify"` (the default) when checking GSC connection status or listing connected sites.
+GSC analytics live on a separate service (reportgo) from the main Risify API. The MCP routes them automatically — pass `service: "gsc"` to `execute_graphql` and `introspect_schema` when querying GSC analytics. Use `service: "risify"` (the default) when checking GSC connection status.
+
+There are **two tiers** of GSC operations on reportgo:
+
+| Tier | Queries | When to use |
+|---|---|---|
+| **v2 (primary, what to use)** | `v2ScAnalytics`, `v2ScQueries`, `v2ScPages` | Almost every agent task. Each returns `{ summary, rows, meta, comparison?, pageInfo? }` — pre-shaped, less knowledge required, supports period-over-period. |
+| v1 (advanced) | `scTraffics`, `scTrafficsPaginated`, `scAnalytics` | Only when you need custom `groupByFields` combinations (e.g. query × device, page × country) or filter dimensions the v2 surface doesn't expose. |
+
+**Default to v2** unless a recipe explicitly calls for v1.
 
 **Two key identifiers** every GSC analytics query needs:
 
-- **`spaceId`** — multi-tenant isolation identifier on reportgo. Get it once per session by minting the space token and decoding its JWT `sub` claim (see step 2 below). The MCP doesn't expose this directly — fetch it yourself with one extra call.
-- **`taskId`** — the GSC sync task on reportgo, returned as `reTaskId` from the `gscConnection` query on `service: "risify"`. Fetch it once and reuse for every analytics call.
+- **`spaceId`** — multi-tenant isolation identifier on reportgo. Get it once per session: mint `reportGetSpaceToken` (on `service: "risify"`), then base64url-decode the JWT's middle segment and read the `sub` claim. **It is NOT the Risify user id.**
+- **`taskId`** — the GSC sync task on reportgo, returned as `reTaskId` from the `gscConnection` query on `service: "risify"`.
+
+Cache both for the conversation; don't re-fetch them per query.
 
 ## Capabilities
 
@@ -27,157 +38,143 @@ query { gscConnection { id status email siteUrl reTaskId } }
 
 ### 2. Get the `spaceId` (once per session)
 
-Mint the report space token, then decode the JWT's `sub` claim.
-
 ```graphql
 mutation { reportGetSpaceToken }
 ```
 
-Returns a JWT string like `eyJhbGciOi…`. Split on `.`, take the middle segment, base64url-decode it, parse JSON, read `sub` — that's the spaceId. Reuse it for every analytics call in this conversation.
+Returns a JWT like `eyJhbGciOi…`. Split on `.`, take segment 2 (the payload), base64url-decode it, parse JSON, read `sub`. That string is the `spaceId`. Save it.
 
-Cache both `spaceId` and `taskId` in the conversation; don't re-fetch them per query.
+### 3. Summary (single row across the range)
 
-### 3. Summary (single aggregated row across the range)
-
-`service: "gsc"`. The reportgo schema calls this `scAnalytics`. With `groupByFields: []` and `groupByDate: false`, you get a single aggregated row over the whole range.
+`service: "gsc"`. `v2ScAnalytics` with no `comparison`.
 
 ```graphql
-query($input: ScAnalyticInput!) {
-  scAnalytics(input: $input) {
-    dated clicks impressions ctr position
+query($input: V2ScAnalyticsInput!) {
+  v2ScAnalytics(input: $input) {
+    summary { clicks impressions ctr position }
+    meta { source reportKey timezone }
   }
 }
 ```
 
-Variables (defaults: last 28 days, ending two days ago):
+Variables — default last 28 days, ending two days ago:
+
 ```json
-{
-  "input": {
-    "default": {
-      "spaceId": "<from-step-2>",
-      "taskId": "<from-step-1>",
-      "startDate": "2026-04-27",
-      "endDate": "2026-05-24",
-      "groupByFields": [],
-      "groupByDate": false
-    }
+{ "input": {
+  "default": {
+    "spaceId": "<from-step-2>",
+    "taskId": "<from-step-1>",
+    "startDate": "2026-04-27",
+    "endDate": "2026-05-24"
   }
-}
+}}
 ```
 
 Output template:
+
 ```
 **Search Console — {startDate} to {endDate}**
 Clicks: {clicks}  •  Impressions: {impressions}
 CTR: {ctr}%       •  Avg position: {position}
 ```
 
-Note: `ctr` comes back as a percentage already (e.g. `0.71` means 0.71%, not 71%). Do not multiply by 100.
+`ctr` comes back as a percent value already (`0.71` means 0.71%, not 71%) — do not multiply by 100.
 
-### 4. Top queries by clicks
+### 4. Top queries
 
-`service: "gsc"`. Group by `queried` and order by `clicks DESC`.
+`service: "gsc"`. `v2ScQueries` returns rows with `query`, `clicks`, `impressions`, `ctr`, `position` — no manual aggregation.
 
 ```graphql
-query($input: ScTrafficInput!) {
-  scTrafficsPaginated(input: $input) {
-    totalCount currentPage totalPage
-    nodes { queried clicks impressions ctr position }
+query($input: V2ScQueriesInput!) {
+  v2ScQueries(input: $input) {
+    summary { clicks impressions ctr position }
+    rows { query clicks impressions ctr position }
+    pageInfo { page limit totalCount totalPages hasNextPage }
   }
 }
 ```
 
-Variables:
+Variables — top by impressions:
+
 ```json
-{
-  "input": {
-    "default": {
-      "spaceId": "<...>",
-      "taskId": "<...>",
-      "startDate": "2026-04-27",
-      "endDate": "2026-05-24",
-      "groupByFields": ["queried"],
-      "orderByFields": ["clicks DESC"]
-    },
+{ "input": {
+  "default": {
+    "spaceId": "<...>",
+    "taskId": "<...>",
+    "startDate": "2026-04-27",
+    "endDate": "2026-05-24",
+    "orderByFields": ["-impressions"],
     "limit": 50,
     "page": 1
   }
-}
+}}
 ```
 
-For "top by impressions" use `orderByFields: ["impressions DESC"]`. For "top by CTR" use `["ctr DESC"]`. For "best avg position" use `["position ASC"]` (lower is better).
+`orderByFields` uses a `-` prefix for descending. Valid keys: `clicks`, `impressions`, `ctr`, `position`. Use `position` (no `-`) for "best position" (lower = better).
 
 ### 5. Top pages
 
-Same query, group by `url_id` instead:
+`service: "gsc"`. `v2ScPages` returns rows with `pageUrl`, `clicks`, `impressions`, `ctr`, `position`.
 
-```json
-{ "input": { "default": { ..., "groupByFields": ["url_id"], "orderByFields": ["clicks DESC"] } } }
-```
-
-`urlId` in the response is the page URL.
-
-### 6. By device / country
-
-`groupByFields: ["device_id"]` or `["country_iso3"]`. Combine: `["queried", "device_id"]` for query × device breakdown. The response carries `deviceId` (1=desktop, 2=mobile, 3=tablet) and `countryIso3`.
-
-### 7. Filter to specific queries / pages
-
-Use the top-level filters on `ScTrafficInput` (these apply before aggregation):
-
-| Filter | Effect |
-|---|---|
-| `queryExact: "saint bernard"` | Match a single query exactly |
-| `queryContains: "boot"` | Substring match on the query |
-| `queries: ["a", "b"]` + `queryOperator: AND \| OR` | Multi-query match |
-| `pageExact: "/collections/x"` | Exact page URL |
-| `pageContains: "/collections/"` | Substring match on page |
-| `pageTypes: [...]` | Risify page-type filter |
-| `countryIso3: "USA"` | ISO3 country |
-| `deviceId: 2` | Raw device id (1 desktop, 2 mobile, 3 tablet) |
-| `positionMin: 11, positionMax: 30` | Average position range, applied after aggregation |
-| `brandFilter: BRANDED \| NON_BRANDED` + `brandRules: [...]` | Brand-vs-non-brand split |
-
-Default branded/non-branded split: if you need it and `brandRules` aren't set in the account, infer the brand from `me.shopName` (Risify API) and pass it as a temporary rule.
-
-### 8. CTR opportunities (high impressions, low CTR)
-
-Pull top queries with a wide enough range to surface volume, then filter to rows with `impressions >= 500` and `ctr < 0.5` (i.e. under 0.5%) and `position <= 20`. Surface as "queries that show often but don't get clicked — title/meta refresh candidates".
-
-### 9. Week-over-week position changes
-
-1. Run top-queries query for current 7 days.
-2. Run the same query for the prior 7 days.
-3. Inner-join on `queried`, compute `position_delta = previous.position - current.position` (positive = improved). Sort descending.
-
-### 10. Time series (trends)
-
-Add `groupByDate: true` and a `dateArgs` entry with the granularity you want:
-
-```json
-{
-  "input": {
-    "default": {
-      "spaceId": "<...>",
-      "taskId": "<...>",
-      "startDate": "2026-03-25",
-      "endDate": "2026-05-24",
-      "groupByFields": [],
-      "groupByDate": true,
-      "dateArgs": [{ "groupBy": "DAY", "orderBy": "ASC" }]
-    }
+```graphql
+query($input: V2ScPagesInput!) {
+  v2ScPages(input: $input) {
+    summary { clicks impressions ctr position }
+    rows { pageUrl clicks impressions ctr position }
+    pageInfo { page limit totalCount hasNextPage }
   }
 }
 ```
 
-Granularities: `DAY`, `WEEK`, `MONTH`, `QUARTER`, `YEAR`. The response carries `dated` plus the calendar components (`year`, `quarter`, `month`, `week`, `day`).
+Variables: same shape as queries, with `orderByFields: ["-clicks"]` for "top by clicks".
+
+### 6. Period-over-period comparison
+
+Add a `comparison` block alongside `default` — same shape. The v2 response carries both periods.
+
+```graphql
+query($input: V2ScPagesInput!) {
+  v2ScPages(input: $input) {
+    summary { clicks impressions ctr position }
+    rows { pageUrl clicks impressions ctr position }
+    comparison { summary { clicks impressions ctr position } rows { pageUrl clicks impressions ctr position } }
+  }
+}
+```
+
+```json
+{ "input": {
+  "default":    { "spaceId": "<...>", "taskId": "<...>", "startDate": "2026-04-27", "endDate": "2026-05-24", "limit": 50, "page": 1, "orderByFields": ["-clicks"] },
+  "comparison": { "spaceId": "<...>", "taskId": "<...>", "startDate": "2026-03-30", "endDate": "2026-04-26", "limit": 50, "page": 1, "orderByFields": ["-clicks"] }
+}}
+```
+
+Then inner-join on `pageUrl` (or `query`) to compute deltas.
+
+### 7. CTR opportunities (high impressions, low CTR)
+
+Run `v2ScPages` with `orderByFields: ["-impressions"]`, then filter rows: `impressions >= 500` AND `ctr < 0.5` AND `position <= 20`. Surface as "pages shown often but rarely clicked — title/meta refresh candidates". This is the read half of Recipe 19 in `recipes.md`.
+
+### 8. Filter / advanced cases → v1
+
+The v2 inputs (`V2ScPagesInput`, `V2ScQueriesInput`, `V2ScAnalyticsInput`) take only `default` + optional `comparison`. They do not expose query/page substring filters, country/device filters, or `groupByFields` combinations.
+
+If you need:
+
+- `queryContains` / `pageContains` substring filter
+- `countryIso3` / `deviceId` slicing
+- Custom `groupByFields` (e.g. query × device)
+- Branded/non-branded splits (`brandFilter` + `brandRules`)
+- Time-series breakdown by day/week (`groupByDate` + `dateArgs`)
+
+→ Drop down to v1 `scTraffics` / `scTrafficsPaginated` / `scAnalytics`. See `gsc-operations.md` "v1 advanced" section for the input shape (`ScTrafficInput` wraps `StandardQueryInput` with the same `spaceId` / `taskId` plus all the extra filters).
 
 ## Date conventions
 
 - All dates are `YYYY-MM-DD` strings.
 - Default range: last 28 days ending two days ago (Google has ~48h reporting lag).
-- For "last month" use the previous calendar month.
-- For "this week" / "last 7 days" use a rolling 7-day window ending two days ago.
+- "Last month" = previous calendar month.
+- "This week" / "last 7 days" = rolling 7-day window ending two days ago.
 
 ## Output templates
 
@@ -188,9 +185,11 @@ Top-queries table:
 | ... | ... | ... | ...% | ... |
 ```
 
-Week-over-week movers table:
+Top-pages table (same shape, replace Query with Page).
+
+Week-over-week movers (after comparison join):
 ```
-| Query | Pos (prev) | Pos (now) | Δ |
+| Item | Now (clicks) | Prev (clicks) | Δ |
 |---|---:|---:|---:|
 ```
 
@@ -199,11 +198,12 @@ Week-over-week movers table:
 | Situation | Response |
 |-----------|----------|
 | `gscConnection` is null or `status != "enabled"` | "Search Console isn't connected. Open Risify Settings → Search Console to connect it." Do not call analytics queries. |
+| `Cannot query field "X"` on a v2 type | You guessed a field name. The summary fields are `clicks`, `impressions`, `ctr`, `position` (flat — no `total*` or `average*` prefix). Row types are `V2ScPageRow` / `V2ScQueryRow` / `V2ScAnalyticsRow`; introspect the matching `*Response` type to see what's available. |
 | Token mint fails / 401 | "I can't reach Search Console right now. Try reconnecting it in Risify Settings." |
-| Empty results | "No Search Console data for that range — Google takes about 48 hours to report new data, and very low-traffic stores may have nothing to show yet." |
-| `spaceId` required error | The space token mint failed silently; re-fetch via `reportGetSpaceToken` and re-decode. |
+| Empty `rows` array | "No Search Console data for that range — Google takes about 48 hours to report new data, and very low-traffic stores may have nothing to show yet." |
 
 ## See also
 
-- `gsc-operations.md` — full GraphQL queries with all input fields and response shapes.
+- `gsc-operations.md` — full GraphQL queries with all input fields and response shapes for both v2 and v1.
+- `recipes.md` Category 9 — cross-flow recipes joining GSC reads with Risify write flows (Recipe 19 in particular uses `v2ScPages`).
 - `account.md` — checking AI credits / plan if a feature is plan-gated.
