@@ -14,6 +14,11 @@ description: >
   open support tickets, manage service requests,
   fix SEO issues from audit, optimize products for SEO, bulk SEO sweep,
   set up SEO from scratch, quick SEO wins, compare audits,
+  analyze Google Search Console performance, view GSC data, show top search queries,
+  find pages losing traffic, check click-through rate, see search impressions and clicks,
+  identify CTR opportunities, compare branded vs non-branded queries, week-over-week position changes,
+  view tracked keywords, list keyword catalogues, show ranking history, find biggest gainers and losers,
+  check keyword position distribution, see newly discovered keywords, ranking trends over time,
   or any Risify-related task. Covers questions like: "generate FAQs for my products",
   "import FAQs", "upload FAQs from CSV", "bulk add FAQs", "add FAQs from file",
   "import questions and answers", "add these FAQs to my collections",
@@ -22,17 +27,28 @@ description: >
   "set up breadcrumbs", "suggest breadcrumbs with AI",
   "set up similar collections" (legacy alias: "add collection menu"),
   "configure discover suggestions" (legacy alias: "configure related searches"),
-  "generate navigation recommendations".
-  All operations use the execute_graphql MCP tool.
+  "generate navigation recommendations",
+  "top GSC queries", "pages losing traffic", "click-through rate",
+  "search impressions", "search console summary", "branded vs non-branded queries",
+  "tracked keywords", "keyword rankings", "ranking history", "position changes",
+  "biggest gainers", "biggest losers", "keyword discoveries", "what keywords am I tracking",
+  "which keywords dropped", "ranking distribution".
+  All operations use the execute_graphql MCP tool. GSC analytics and Keyword
+  Tracking data live on separate services — pass `service: "gsc"` or
+  `service: "keyword"` to execute_graphql / introspect_schema when working
+  with those domains.
 ---
 
 # Risify MCP Skill
 
 Complete workflow guide for the Risify Shopify SEO platform. All operations go through the `execute_graphql` MCP tool.
 
-**Two API patterns:**
-- **Risify API** — direct queries/mutations (e.g., `generateAIFAQ`, `aiCreditInfo`, `me`). Use this for most operations.
-- **Shopify Admin API** — wrapped in `shopifyProxy(query: "...", variables: {...})` which proxies to Shopify through the Risify backend. No separate Shopify token needed. Use this only for direct Shopify operations (metaobject CRUD, metafield reads/writes, theme listing).
+**Four data domains, one tool (`execute_graphql`).** Pick the right `service` per call:
+
+- **Risify API** — `service: "risify"` (default; you can omit it). Direct queries/mutations (e.g., `generateAIFAQ`, `aiCreditInfo`, `me`, `gscConnection`, `gscSites`). Use this for most operations.
+- **Shopify Admin API** — `service: "risify"` with `shopifyProxy(query: "...", variables: {...})` wrapper. Proxies to Shopify through the Risify backend. No separate Shopify token needed. Use only for direct Shopify operations (metaobject CRUD, metafield reads/writes, theme listing).
+- **Google Search Console analytics** — `service: "gsc"`. Read-only analytics: `gscSummary`, `gscQueries`, `gscPages`. See `references/gsc.md`. Connection status checks (`gscConnection`, `gscSites`) stay on `service: "risify"`.
+- **Keyword Tracking** — `service: "keyword"`. Read-only: catalogues, tracked items, position snapshots, gainers/losers, history, keyword discoveries. See `references/keywords.md`. Writes are intentionally not exposed in this release — direct the user to the Risify Keyword Tracking page for adds/edits.
 
 **UI labels vs API names** — the product UI uses friendly labels that differ from metafield keys and GraphQL enums. Always speak the UI label to the user; use the metafield key / enum only inside queries. Old labels that MUST NOT appear in user-facing strings:
 - "Related Searches" → say **"Discover"** / **"Discover suggestions"** (metafield key stays `related_searches`, works on both Collection and Product owner types; bulk-AI enum is `RELATED_SEARCH` — collection-only)
@@ -64,6 +80,20 @@ Match the user's request to the right flow:
 | "Add similar collections" / "Set up similar" (on a collection) | Navigation → Similar collections |
 | "Show related products" / "Set up similar products" (on a product) | Navigation → Similar products |
 | "Open a support ticket" | Support → Create Ticket |
+| "Show my Search Console data" / "GSC summary" / "Clicks and impressions last 28 days" | GSC → Summary |
+| "Top GSC queries" / "Best search queries" / "What am I ranking for?" | GSC → Top Queries |
+| "Pages losing traffic" / "Top GSC pages" / "Which pages get the most search clicks" | GSC → Top Pages |
+| "CTR opportunities" / "High impressions low CTR" / "Queries that don't get clicked" | GSC → CTR Opportunities |
+| "Branded vs non-branded queries" | GSC → Top Queries (with `QueryNotContains: <brand>`) |
+| "Position changes week over week" / "Which queries moved up or down" | GSC → Position Changes |
+| "Connect GSC" / "Disconnect Search Console" | Tell user this happens in Risify Settings → Search Console; don't try to do it from MCP |
+| "List my catalogues" / "Show keyword catalogues" / "What am I tracking?" | Keywords → List catalogues |
+| "Tracked keywords" / "Show keywords in catalogue X" | Keywords → List items |
+| "Biggest gainers" / "Biggest losers" / "Which keywords improved this week" | Keywords → Movers |
+| "Ranking history for keyword X" / "Position history" | Keywords → History |
+| "Ranking distribution" / "How many in top 10" / "Position trend" | Keywords → Distribution / Trend |
+| "New keyword discoveries" / "What new keywords am I ranking for" | Keywords → Discoveries |
+| "Add keyword X to tracking" / "Stop tracking Y" / "Tag these keywords" | Tell user to use the Risify Keyword Tracking page — writes not exposed in this release |
 | "List all collections with products" / "Export collections" | Recipe 18: Collection Products Export |
 | **Multi-step workflows** | **→ See `references/recipes.md`** |
 | "Fix my SEO issues" / "Fix meta issues from audit" | Recipe 1: Audit → Fix Meta Issues |
@@ -85,6 +115,8 @@ Match the user's request to the right flow:
 | Account Management | Account info, billing, plans, contacts, credits, subscription | `references/account.md` + `references/account-operations.md` |
 | Navigation | Breadcrumbs, Similar (collections + products), Discover suggestions, AI suggestions | `references/navigation.md` + `references/navigation-operations.md` |
 | Support & Services | Support tickets, service requests | `references/services.md` + `references/services-operations.md` |
+| Google Search Console | Analyze GSC clicks, impressions, CTR, position; top queries/pages; movers (read-only) | `references/gsc.md` + `references/gsc-operations.md` |
+| Keyword Tracking & Discovery | Catalogues, tracked-keyword rankings, position history, gainers/losers, discoveries (read-only) | `references/keywords.md` + `references/keywords-operations.md` |
 | **Cross-Flow Recipes** | Multi-step workflows that chain features (audit→fix, full product SEO, onboarding) | `references/recipes.md` |
 
 ## How to Use
@@ -105,6 +137,10 @@ Match the user's request to the right flow:
 | Partial failures (successCount < total) | Some items succeeded, some failed | Report successes, list failures with specific reasons, ask if user wants to retry failed items |
 | "feature not activated" | Missing metafield definitions | Guide user through feature activation (see navigation.md) |
 | Quota exceeded (audits) | Monthly audit limit reached | Show quota info, suggest plan upgrade |
+| GSC analytics call fails with auth error | Search Console not connected or token expired | Check `gscConnection` (on `service: "risify"`); if not connected, tell user to set it up in Risify Settings → Search Console |
+| GSC empty result | No data for the chosen range | Mention Google has ~48h reporting lag; suggest widening the range |
+| Keyword call fails with subscription error | Keyword Tracking requires an active paid plan | Show plan info from `me`/`appSubscriptionCharge`; suggest upgrade |
+| Keyword `catalogues` returns 0 | User hasn't set up tracking yet | Tell them to create a catalogue from the Risify Keyword Tracking page |
 
 ## Quick Reference
 
