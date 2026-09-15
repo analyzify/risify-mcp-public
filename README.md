@@ -12,6 +12,20 @@ curl -sL https://raw.githubusercontent.com/analyzify/risify-mcp-public/main/inst
 
 This auto-detects your OS and architecture, downloads the latest binary, and installs it to `/usr/local/bin`.
 
+The archive is checked against the `checksums.txt` published with the release before anything is extracted or installed, and the install itself is a rename, so a failure part-way leaves your existing binary untouched.
+
+#### Installing a specific version
+
+```bash
+curl -sL https://raw.githubusercontent.com/analyzify/risify-mcp-public/main/install.sh | RISIFY_MCP_VERSION=v0.5.2 sh
+```
+
+Rolling back is the same command with an earlier tag. `RISIFY_MCP_INSTALL_DIR` installs somewhere other than `/usr/local/bin`; pointing it at a directory you own avoids the `sudo` prompt.
+
+#### What the checksum covers
+
+It catches a download corrupted or tampered with in transit. It is not protection against a compromised release origin: the checksums are published alongside the archive, so anything able to replace one can replace the other. Signed provenance would cover that, and belongs in the release pipeline.
+
 ### Windows (PowerShell)
 
 ```powershell
